@@ -93,7 +93,7 @@ ibus-typing-booster
 gnome-shell
 gnome-session
 gnome-settings-daemon
-gnome-control-center
+arrera-gnome-control-center
 mutter
 gdm
 gnome-keyring
@@ -155,6 +155,8 @@ plymouth-plugin-script
 arrera-branding
 arrera-wallpapers
 arrera-gnome-config
+arrera-gnome-control-center
+gnome-shell-extension-arrera-dock
 
 # Audio, vidéo et réseau
 pipewire
