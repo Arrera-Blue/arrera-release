@@ -190,14 +190,14 @@ POLKIT_ANACONDA_EOF
 echo "[4/5] Configuration du dépôt Copr et du service de protection Arrera..."
 
 mkdir -p /etc/yum.repos.d
-cat > /etc/yum.repos.d/_copr:copr.fedorainfracloud.org:arrera-software:arrera_blue.repo <<'COPR_REPO_EOF'
-[copr:copr.fedorainfracloud.org:arrera-software:arrera_blue]
-name=Copr repo for arrera_blue owned by arrera-software
-baseurl=https://download.copr.fedorainfracloud.org/results/arrera-software/arrera_blue/fedora-$releasever-$basearch/
+cat > /etc/yum.repos.d/_copr:copr.fedorainfracloud.org:arrera-software:arrera-blue.repo <<'COPR_REPO_EOF'
+[copr:copr.fedorainfracloud.org:arrera-software:arrera-blue]
+name=Copr repo for arrera-blue owned by arrera-software
+baseurl=https://download.copr.fedorainfracloud.org/results/arrera-software/arrera-blue/fedora-$releasever-$basearch/
 type=rpm-md
 skip_if_unavailable=True
 gpgcheck=1
-gpgkey=https://download.copr.fedorainfracloud.org/results/arrera-software/arrera_blue/pubkey.gpg
+gpgkey=https://download.copr.fedorainfracloud.org/results/arrera-software/arrera-blue/pubkey.gpg
 repo_gpgcheck=0
 enabled=1
 enabled_metadata=1
@@ -205,7 +205,7 @@ cost=100
 COPR_REPO_EOF
 
 # Importer la clé publique GPG officielle du Copr Arrera
-rpm --import https://download.copr.fedorainfracloud.org/results/arrera-software/arrera_blue/pubkey.gpg 2>/dev/null || true
+rpm --import https://download.copr.fedorainfracloud.org/results/arrera-software/arrera-blue/pubkey.gpg 2>/dev/null || true
 
 # Configuration native du dépôt Flathub et préinstallation des applications Flatpak
 if command -v flatpak &>/dev/null; then
