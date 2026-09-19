@@ -171,6 +171,7 @@ dejavu-sans-fonts
 calamares
 arrera-installer
 cage
+squashfs-tools
 qt6-qtdeclarative
 qt6-qtquickcontrols2
 
