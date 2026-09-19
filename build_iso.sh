@@ -10,10 +10,8 @@
 #
 # Ce script :
 #   1. Vérifie les prérequis (root, outils, espace disque)
-#   2. Injecte setup-dev-env.sh dans le kickstart (remplace __SETUP_DEV_ENV__)
-#   3. Encode les assets (PNG, configs) en base64 et les injecte dans le %post
-#   4. Génère le .ks final dans /var/tmp/arrera-build/
-#   5. Lance livemedia-creator pour créer l'ISO
+#   2. Prépare le kickstart pour livemedia-creator
+#   3. Lance livemedia-creator pour créer l'ISO
 # ==============================================================================
 
 set -euo pipefail
@@ -45,8 +43,6 @@ case "$TARGET_ARCH" in
         ;;
 esac
 
-SETUP_SCRIPT="$SCRIPT_DIR/setup-dev-env.sh"
-
 BUILD_DIR="/var/tmp/arrera-build"
 RESULT_DIR="/var/tmp/arrera-iso"
 KS_FINAL="$BUILD_DIR/arrera-final.ks"
@@ -76,7 +72,6 @@ fi
 # Fichiers requis
 info "Vérification des fichiers sources..."
 [ -f "$KS_TEMPLATE" ] || error "Kickstart template introuvable : $KS_TEMPLATE"
-[ -f "$SETUP_SCRIPT" ] || error "Script de setup introuvable : $SETUP_SCRIPT"
 ok "Tous les fichiers sources sont présents."
 
 # Outils requis
@@ -128,20 +123,7 @@ cp "$KS_TEMPLATE" "$KS_FINAL"
 # Retirer la ligne 'graphical' si présente (livemedia-creator interdit les modes d'affichage)
 sed -i '/^graphical$/d' "$KS_FINAL"
 
-# Remplacer __SETUP_DEV_ENV__ par le contenu du script setup-dev-env.sh
-sed -e "/^__SETUP_DEV_ENV__$/{
-    r $SETUP_SCRIPT
-    d
-}" "$KS_FINAL" > "${KS_FINAL}.tmp"
-mv "${KS_FINAL}.tmp" "$KS_FINAL"
-
 ok "Kickstart final généré : $KS_FINAL"
-
-# Vérification rapide
-if grep -qE "^__SETUP_DEV_ENV__$" "$KS_FINAL"; then
-    error "Le placeholder __SETUP_DEV_ENV__ n'a pas été remplacé dans le kickstart final !"
-fi
-ok "Vérification des placeholders OK."
 
 # --------------------------------------------------------------------------
 # 5. Nettoyage de l'ancien résultat et des dossiers temporaires

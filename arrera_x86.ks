@@ -1,9 +1,7 @@
 # ==============================================================================
 # Arrera Linux - Kickstart x86_64 (Intel / AMD 64-bit)
 # ==============================================================================
-# IMPORTANT : Ce fichier est un TEMPLATE.
-# Le script build_iso.sh injecte setup-dev-env.sh et génère le .ks final.
-# NE PAS utiliser ce fichier directement avec livemedia-creator.
+# IMPORTANT : Ce fichier est le Kickstart officiel x86_64 pour Arrera Linux.
 # ==============================================================================
 
 # --------------------------------------------------------------------------
@@ -201,12 +199,46 @@ systemctl enable firewalld
 # Forcer le démarrage en mode graphique (sinon GDM ne se lance pas)
 systemctl set-default graphical.target
 
-# Le contenu du script de configuration est injecté directement ci-dessous par build_iso.sh
-__SETUP_DEV_ENV__
-
 # ================================================================
 # Configuration de la session Live (auto-login + installateur)
 # ================================================================
+
+# Règles Polkit pour la session Live
+mkdir -p /etc/polkit-1/rules.d/
+
+cat > /etc/polkit-1/rules.d/49-liveuser.rules <<'POLKIT_LIVE_EOF'
+polkit.addAdminRule(function(action, subject) {
+    return ["unix-group:wheel"];
+});
+polkit.addRule(function(action, subject) {
+    if (subject.isInGroup("wheel")) {
+        return polkit.Result.YES;
+    }
+});
+POLKIT_LIVE_EOF
+
+cat > /etc/polkit-1/rules.d/50-anaconda.rules <<'POLKIT_ANACONDA_EOF'
+polkit.addRule(function(action, subject) {
+    if (action.id.indexOf("org.fedoraproject.anaconda") === 0 ||
+        action.id.indexOf("org.freedesktop.policykit.exec") === 0 ||
+        action.id.indexOf("org.freedesktop.udisks2") === 0) {
+        return polkit.Result.YES;
+    }
+});
+POLKIT_ANACONDA_EOF
+
+# ================================================================
+# Applications Flatpak (Saveurs bureau : Home / School)
+# ================================================================
+if command -v flatpak &>/dev/null; then
+    echo "Configuration de Flathub et installation des Flatpaks..."
+    flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+    flatpak install -y --noninteractive flathub \
+        it.mijorus.gearlever \
+        io.missioncenter.MissionCenter \
+        io.github.flattool.Warehouse \
+        com.github.tchx84.Flatseal 2>/dev/null || true
+fi
 
 # Auto-login GDM pour la session Live (pas de mot de passe demandé)
 mkdir -p /etc/gdm
