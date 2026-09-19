@@ -41,7 +41,7 @@ part / --size=10240 --fstype=ext4
 # Services
 # --------------------------------------------------------------------------
 
-services --enabled=NetworkManager,gdm,firewalld
+services --enabled=NetworkManager,firewalld,arrera-kiosk --disabled=gdm
 
 # --------------------------------------------------------------------------
 # Paquets
@@ -168,9 +168,10 @@ google-noto-sans-fonts
 google-noto-sans-mono-fonts
 dejavu-sans-fonts
 
-# === Installateur Calamares et configuration Arrera ===
+# === Installateur Calamares et configuration Arrera (Kiosque) ===
 calamares
 arrera-installer
+cage
 
 %end
 
@@ -189,13 +190,14 @@ echo "=========================================="
 echo "arrera ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/arrera
 chmod 0440 /etc/sudoers.d/arrera
 
-# Activation des services
+# Activation des services pour le média Live (Kiosque Calamares direct sans GNOME)
 systemctl enable NetworkManager
-systemctl enable gdm
 systemctl enable firewalld
+systemctl enable arrera-kiosk.service
+systemctl disable gdm || true
 
-# Forcer le démarrage en mode graphique (sinon GDM ne se lance pas)
-systemctl set-default graphical.target
+# Cible par défaut pour le Kiosque
+systemctl set-default multi-user.target
 
 # ================================================================
 # Configuration du dépôt Copr Arrera avec clé GPG officielle
@@ -260,53 +262,8 @@ if command -v flatpak &>/dev/null; then
         com.github.tchx84.Flatseal 2>/dev/null || true
 fi
 
-# Auto-login GDM pour la session Live (pas de mot de passe demandé)
-mkdir -p /etc/gdm
-cat > /etc/gdm/custom.conf <<'GDM_EOF'
-[daemon]
-AutomaticLoginEnable=True
-AutomaticLogin=arrera
-
-[security]
-
-[xdmcp]
-
-[chooser]
-
-[debug]
-GDM_EOF
-
-# Raccourci "Installer Arrera Blue-dev 2026" sur le bureau
-mkdir -p /home/arrera/Bureau
-cat > /home/arrera/Bureau/install-arrera.desktop <<'DESKTOP_EOF'
-[Desktop Entry]
-Name=Installer Arrera Blue-dev 2026
-Name[en]=Install Arrera Blue-dev 2026
-Comment=Installer Arrera Blue-dev 2026 sur le disque dur
-Exec=pkexec /usr/bin/calamares
-Icon=calamares
-Terminal=false
-Type=Application
-Categories=System;Qt;
-StartupNotify=true
-X-GNOME-Autostart-enabled=true
-DESKTOP_EOF
-chmod +x /home/arrera/Bureau/install-arrera.desktop
-chown -R arrera:arrera /home/arrera/Bureau
-
-# Aussi dans /usr/share/applications pour le menu
-cp /home/arrera/Bureau/install-arrera.desktop /usr/share/applications/install-arrera.desktop
-
-# Lancement AUTOMATIQUE de Calamares au démarrage de la session Live
-mkdir -p /etc/xdg/autostart
-cp /home/arrera/Bureau/install-arrera.desktop /etc/xdg/autostart/install-arrera.desktop
-
-mkdir -p /home/arrera/.config/autostart
-cp /home/arrera/Bureau/install-arrera.desktop /home/arrera/.config/autostart/install-arrera.desktop
-
-# Marquer le .desktop comme fiable (GNOME 44+)
-mkdir -p /home/arrera/.local/share
-chown -R arrera:arrera /home/arrera/.local /home/arrera/.config
+# S'assurer qu'aucun autologin GDM résiduel n'est configuré
+rm -f /etc/gdm/custom.conf
 
 echo "=========================================="
 echo " FIN DE LA CONFIGURATION ARRERA LINUX    "
