@@ -167,11 +167,9 @@ google-noto-sans-fonts
 google-noto-sans-mono-fonts
 dejavu-sans-fonts
 
-# === Installateur (pour "Installer sur le disque dur") ===
-anaconda
-anaconda-install-env-deps
-anaconda-live
-liveinst
+# === Installateur Calamares et configuration Arrera ===
+calamares
+arrera-installer
 
 %end
 
@@ -237,15 +235,16 @@ polkit.addRule(function(action, subject) {
 });
 POLKIT_LIVE_EOF
 
-cat > /etc/polkit-1/rules.d/50-anaconda.rules <<'POLKIT_ANACONDA_EOF'
+cat > /etc/polkit-1/rules.d/50-calamares.rules <<'POLKIT_CALAMARES_EOF'
 polkit.addRule(function(action, subject) {
-    if (action.id.indexOf("org.fedoraproject.anaconda") === 0 ||
+    if (action.id.indexOf("com.github.calamares") === 0 ||
+        action.id.indexOf("io.calamares") === 0 ||
         action.id.indexOf("org.freedesktop.policykit.exec") === 0 ||
         action.id.indexOf("org.freedesktop.udisks2") === 0) {
         return polkit.Result.YES;
     }
 });
-POLKIT_ANACONDA_EOF
+POLKIT_CALAMARES_EOF
 
 # ================================================================
 # Applications Flatpak (Saveurs bureau : Home / School)
@@ -283,11 +282,11 @@ cat > /home/arrera/Bureau/install-arrera.desktop <<'DESKTOP_EOF'
 Name=Installer Arrera Blue-dev 2026
 Name[en]=Install Arrera Blue-dev 2026
 Comment=Installer Arrera Blue-dev 2026 sur le disque dur
-Exec=/usr/bin/liveinst
-Icon=anaconda
+Exec=pkexec /usr/bin/calamares
+Icon=calamares
 Terminal=false
 Type=Application
-Categories=System;GTK;
+Categories=System;Qt;
 StartupNotify=true
 X-GNOME-Autostart-enabled=true
 DESKTOP_EOF
@@ -297,7 +296,7 @@ chown -R arrera:arrera /home/arrera/Bureau
 # Aussi dans /usr/share/applications pour le menu
 cp /home/arrera/Bureau/install-arrera.desktop /usr/share/applications/install-arrera.desktop
 
-# Lancement AUTOMATIQUE d'Anaconda au démarrage de la session Live
+# Lancement AUTOMATIQUE de Calamares au démarrage de la session Live
 mkdir -p /etc/xdg/autostart
 cp /home/arrera/Bureau/install-arrera.desktop /etc/xdg/autostart/install-arrera.desktop
 
