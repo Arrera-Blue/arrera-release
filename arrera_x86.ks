@@ -30,7 +30,7 @@ selinux --permissive
 
 url --metalink="https://mirrors.fedoraproject.org/metalink?repo=fedora-$releasever&arch=$basearch"
 repo --name="updates" --metalink="https://mirrors.fedoraproject.org/metalink?repo=updates-released-f$releasever&arch=$basearch" --install --cost=50
-repo --name="copr-arrera-blue" --baseurl="https://download.copr.fedorainfracloud.org/results/arrera-software/arrera-blue/fedora-$releasever-$basearch/" --cost=100 --install
+repo --name="copr-arrera-blue" --baseurl="https://download.copr.fedorainfracloud.org/results/arrera-software/arrera-blue/fedora-$releasever-$basearch/" --cost=100
 
 # Partitionnement (taille fixe requise par livemedia-creator --no-virt)
 zerombr
@@ -198,6 +198,27 @@ systemctl enable firewalld
 
 # Forcer le démarrage en mode graphique (sinon GDM ne se lance pas)
 systemctl set-default graphical.target
+
+# ================================================================
+# Configuration du dépôt Copr Arrera avec clé GPG officielle
+# ================================================================
+mkdir -p /etc/yum.repos.d
+cat > /etc/yum.repos.d/_copr:copr.fedorainfracloud.org:arrera-software:arrera-blue.repo <<'COPR_REPO_EOF'
+[copr:copr.fedorainfracloud.org:arrera-software:arrera-blue]
+name=Copr repo for arrera-blue owned by arrera-software
+baseurl=https://download.copr.fedorainfracloud.org/results/arrera-software/arrera-blue/fedora-$releasever-$basearch/
+type=rpm-md
+skip_if_unavailable=True
+gpgcheck=1
+gpgkey=https://download.copr.fedorainfracloud.org/results/arrera-software/arrera-blue/pubkey.gpg
+repo_gpgcheck=0
+enabled=1
+enabled_metadata=1
+cost=100
+COPR_REPO_EOF
+
+# Importer la clé publique GPG officielle du Copr Arrera
+rpm --import https://download.copr.fedorainfracloud.org/results/arrera-software/arrera-blue/pubkey.gpg 2>/dev/null || true
 
 # ================================================================
 # Configuration de la session Live (auto-login + installateur)
