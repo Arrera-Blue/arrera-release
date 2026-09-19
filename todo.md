@@ -23,42 +23,44 @@ L'objectif est d'éliminer le script `setup-dev-env.sh` en exploitant les paquet
 
 #### 1.1. Mettre à jour `arrera-branding`
 *Exploiter les dossiers `src/systemd/` et `src/scripts/` déjà créés dans le projet mais encore vides.*
-- [ ] **Profils Anaconda indispensables** :
-  - [ ] Copier `arrera.conf` et `arrera-workstation.conf` dans `src/anaconda/profile.d/`.
-  - [ ] Les installer vers `/etc/anaconda/profile.d/` dans le `.spec`.
-- [ ] **Hook GRUB / Kernel** :
-  - [ ] Placer `99-arrera-title.install` dans `src/scripts/`.
-  - [ ] L'installer vers `/etc/kernel/install.d/` dans le `.spec`.
-- [ ] **Service de garde de marque (`branding-guard`)** :
-  - [ ] Placer `arrera-branding-guard.sh` dans `src/scripts/` (installé vers `/usr/libexec/`).
-  - [ ] Placer `arrera-branding-guard.service` dans `src/systemd/` (installé vers `%{_unitdir}/`).
-  - [ ] L'activer dans le scriptlet `%post`.
-- [ ] **Service de nettoyage post-installation (`post-install-cleanup`)** :
-  - [ ] Placer `arrera-post-install-cleanup.sh` dans `src/scripts/` (installé vers `/usr/libexec/`).
-  - [ ] Placer `arrera-post-install-cleanup.service` dans `src/systemd/` (installé vers `%{_unitdir}/`).
-  - [ ] L'activer dans le scriptlet `%post`.
-- [ ] **Identité système propre** :
-  - [ ] Installer les fichiers statiques `/usr/lib/os-release` et `/etc/arrera-release` directement depuis le RPM au lieu des `sed -i` dans le `%post`.
-- [ ] **Rebuild & Bump** :
-  - [ ] Incrémenter la version (ex: `1.2.0`) et rebuilder le RPM sur Copr.
+- [x] **Profils Anaconda indispensables** :
+  - [x] Copier `arrera.conf` et `arrera-workstation.conf` dans `src/anaconda/profile.d/`.
+  - [x] Les installer vers `/etc/anaconda/profile.d/` dans le `.spec`.
+- [x] **Hook GRUB / Kernel** :
+  - [x] Placer `99-arrera-title.install` dans `src/scripts/`.
+  - [x] L'installer vers `/etc/kernel/install.d/` dans le `.spec`.
+- [x] **Service de garde de marque (`branding-guard`)** :
+  - [x] Placer `arrera-branding-guard.sh` dans `src/scripts/` (installé vers `/usr/libexec/`).
+  - [x] Placer `arrera-branding-guard.service` dans `src/systemd/` (installé vers `%{_unitdir}/`).
+  - [x] L'activer dans le scriptlet `%post`.
+- [x] **Service de nettoyage post-installation (`post-install-cleanup`)** :
+  - [x] Placer `arrera-post-install-cleanup.sh` dans `src/scripts/` (installé vers `/usr/libexec/`).
+  - [x] Placer `arrera-post-install-cleanup.service` dans `src/systemd/` (installé vers `%{_unitdir}/`).
+  - [x] L'activer dans le scriptlet `%post`.
+- [x] **Identité système propre** :
+  - [x] Installer les fichiers statiques `/usr/lib/os-release` et `/etc/arrera-release` directement depuis le RPM au lieu des `sed -i` dans le `%post`.
+- [x] **Rebuild & Bump** :
+  - [x] Incrémenté en `2026.beta.1-2` et validé localement avec `./build.sh`.
+  - [x] Push git et rebuild sur Copr.
 
 #### 1.2. Mettre à jour `arrera-gnome-config`
-- [ ] **Politique Firefox** :
-  - [ ] Créer `src/firefox/policies.json` (barre de recherche épurée, aucun favori/sponsor imposé).
-  - [ ] Installer le fichier vers `/etc/firefox/policies/policies.json` dans le `.spec`.
-- [ ] **Rebuild & Bump** :
-  - [ ] Incrémenter la version (ex: `1.0.3`) et rebuilder le RPM sur Copr.
+- [x] **Politique Firefox** :
+  - [x] Créer `src/firefox/policies.json` (barre de recherche épurée, aucun favori/sponsor imposé).
+  - [x] Installer le fichier vers `/etc/firefox/policies/policies.json` dans le `.spec`.
+- [x] **Rebuild & Bump** :
+  - [x] Incrémenté en `2026.beta.1-2` et validé localement avec `./build.sh`.
+  - [x] Push git et rebuild sur Copr.
 
 ---
 
 ### Phase 2 : Ajuster les Kickstarts aux directives natives
 
-- [ ] **2.1. Dépôt Copr persistant** :
+- [x] **2.1. Dépôt Copr persistant** :
   - [x] Vérifié : La directive `repo --name="copr-arrera-blue" ... --install` est déjà configurée avec `--install` dans les `.ks`.
-- [ ] **2.2. Règles Polkit Live** :
-  - [ ] Déplacer les règles `49-liveuser.rules` et `50-anaconda.rules` directement dans la section `%post` de la base Live du Kickstart.
-- [ ] **2.3. Isolation des Flatpaks** :
-  - [ ] Extraire la commande `flatpak install -y flathub ...` pour ne la jouer que sur les saveurs bureau (*Home*, *School*).
+- [x] **2.2. Règles Polkit Live** :
+  - [x] Déplacer les règles `49-liveuser.rules` et `50-anaconda.rules` directement dans la section `%post` de la base Live du Kickstart.
+- [x] **2.3. Isolation des Flatpaks** :
+  - [x] Extraire et isoler la commande `flatpak install -y flathub ...` dans le bloc dédié aux saveurs bureau (*Home*, *School*).
 
 ---
 
@@ -79,17 +81,17 @@ L'objectif est d'éliminer le script `setup-dev-env.sh` en exploitant les paquet
       ├── enterprise.ks       # Intégration domaine / FreeIPA / VPN, bureautique pro
       └── server.ks           # Minimal headless, Cockpit, conteneurs Podman (sans GUI)
   ```
-- [ ] **3.2. Nettoyage des templates actuels** :
-  - [ ] Supprimer la ligne `__SETUP_DEV_ENV__` dans `arrera_x86.ks`.
-  - [ ] Supprimer la ligne `__SETUP_DEV_ENV__` dans `arrera_arm64.ks`.
+- [x] **3.2. Nettoyage des templates actuels** :
+  - [x] Supprimer la ligne `__SETUP_DEV_ENV__` dans `arrera_x86.ks`.
+  - [x] Supprimer la ligne `__SETUP_DEV_ENV__` dans `arrera_arm64.ks`.
 
 ---
 
 ### Phase 4 : Nettoyage de `build_iso.sh`
 
-- [ ] **4.1. Suppression de l'injection `sed`** :
-  - [ ] Supprimer `SETUP_SCRIPT="$SCRIPT_DIR/setup-dev-env.sh"`.
-  - [ ] Supprimer le bloc `sed -e "/^__SETUP_DEV_ENV__$/{ r $SETUP_SCRIPT; d; }"` et sa vérification.
+- [x] **4.1. Suppression de l'injection `sed`** :
+  - [x] Supprimer `SETUP_SCRIPT="$SCRIPT_DIR/setup-dev-env.sh"`.
+  - [x] Supprimer le bloc `sed -e "/^__SETUP_DEV_ENV__$/{ r $SETUP_SCRIPT; d; }"` et sa vérification.
 - [ ] **4.2. Prise en charge des arguments dynamiques** :
   - [ ] Supporter `./build_iso.sh --flavor <home|school|enterprise|server> --arch <x86_64|aarch64>`.
   - [ ] Définir la cible par défaut sur `--flavor home --arch x86_64`.
@@ -98,8 +100,8 @@ L'objectif est d'éliminer le script `setup-dev-env.sh` en exploitant les paquet
 
 ### Phase 5 : Suppression définitive et validation
 
-- [ ] **5.1. Suppression du script** :
-  - [ ] Supprimer le fichier `setup-dev-env.sh`.
+- [x] **5.1. Suppression du script** :
+  - [x] Supprimer le fichier `setup-dev-env.sh`.
 - [ ] **5.2. Compilation de validation** :
-  - [ ] Lancer `./build_iso.sh --flavor home --arch x86_64`.
+  - [ ] Lancer `./build_iso.sh` pour la saveur Home.
   - [ ] Tester l'ISO en VM : vérifier l'installeur Anaconda, le bootloader GRUB "Arrera Blue-dev 2026", Plymouth et la session bureau.
