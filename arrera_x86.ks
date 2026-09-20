@@ -203,6 +203,22 @@ systemctl disable gdm || true
 # Cible par défaut pour le Kiosque
 systemctl set-default multi-user.target
 
+# Configuration Plymouth par défaut (thème Arrera)
+mkdir -p /etc/dracut.conf.d
+cat > /etc/dracut.conf.d/plymouth.conf << 'DRACUT_LIVE_EOF'
+add_dracutmodules+=" plymouth "
+DRACUT_LIVE_EOF
+
+mkdir -p /etc/plymouth
+cat > /etc/plymouth/plymouthd.conf << 'PLYMOUTH_LIVE_EOF'
+[Daemon]
+Theme=arrera
+ShowDelay=0
+DeviceTimeout=8
+PLYMOUTH_LIVE_EOF
+
+ln -sf /usr/share/plymouth/themes/arrera/arrera.plymouth /usr/share/plymouth/themes/default.plymouth 2>/dev/null || true
+
 # ================================================================
 # Configuration du dépôt Copr Arrera avec clé GPG officielle
 # ================================================================
@@ -358,36 +374,60 @@ if [ -n "$LATEST_KERNEL" ]; then
     fi
 fi
 
+# Configuration des paramètres silencieux et Plymouth pour toutes les entrées BLS
+SILENT_CMDLINE="rhgb quiet splash loglevel=3 rd.udev.log_priority=3 systemd.show_status=false vt.global_cursor_default=0"
+
 if [ -d /boot/loader/entries ]; then
     for entry in /boot/loader/entries/*.conf; do
         [ -f "$entry" ] || continue
-        if ! grep -q "splash" "$entry"; then
-            sed -i '/^options / s/$/ splash/' "$entry"
-        fi
+        # Nettoyer les anciens arguments et rd.live.image
+        sed -i -E 's/\s+rd\.live\.image//g' "$entry"
+        sed -i -E 's/\s+(rhgb|quiet|splash|loglevel=[0-9]+|rd\.udev\.log_priority=[0-9]+|systemd\.show_status=\w+|vt\.global_cursor_default=[0-9]+)//g' "$entry"
+        sed -i "/^options / s/$/ ${SILENT_CMDLINE}/" "$entry"
         sed -i 's/^title Fedora.*/title Arrera Blue-dev 2026/g' "$entry" 2>/dev/null || true
         sed -i 's/^title Arrera.*/title Arrera Blue-dev 2026/g' "$entry" 2>/dev/null || true
     done
 fi
 
+if command -v grubby >/dev/null 2>&1; then
+    grubby --update-kernel=ALL --remove-args="rd.live.image" 2>/dev/null || true
+    grubby --update-kernel=ALL --args="${SILENT_CMDLINE}" 2>/dev/null || true
+fi
+
+# Sauvegarder la ligne de commande par défaut pour les futures mises à jour de noyau (/etc/kernel/cmdline)
+ROOT_ARG=$(grep -o 'root=[^ ]*' /boot/loader/entries/*.conf 2>/dev/null | head -n 1 || true)
+if [ -n "$ROOT_ARG" ]; then
+    mkdir -p /etc/kernel
+    echo "${ROOT_ARG} ro ${SILENT_CMDLINE}" > /etc/kernel/cmdline
+fi
+
+# Configuration stricte de /etc/default/grub pour masquer totalement le menu
 mkdir -p /etc/default
 cat > /etc/default/grub << 'GRUB_EOF'
 GRUB_TIMEOUT=0
 GRUB_TIMEOUT_STYLE=hidden
 GRUB_RECORDFAIL_TIMEOUT=0
-GRUB_DISTRIBUTOR="Arrera Blue 2026"
-GRUB_DEFAULT=saved
+GRUB_DISTRIBUTOR="Arrera Blue-dev 2026"
+GRUB_DEFAULT=0
 GRUB_DISABLE_SUBMENU=true
-GRUB_CMDLINE_LINUX="rhgb quiet splash"
+GRUB_TERMINAL_OUTPUT="console"
+GRUB_CMDLINE_LINUX="rhgb quiet splash loglevel=3 rd.udev.log_priority=3 systemd.show_status=false vt.global_cursor_default=0"
 GRUB_DISABLE_RECOVERY=true
 GRUB_EOF
 
+# Marquer l'environnement GRUB comme démarré avec succès pour éviter que menu_auto_hide ne force l'affichage
 if command -v grub2-editenv >/dev/null 2>&1; then
-    grub2-editenv /boot/grub2/grubenv set menu_auto_hide=1 2>/dev/null || true
-    grub2-editenv /boot/grub2/grubenv set boot_success=1 2>/dev/null || true
-    grub2-editenv /boot/grub2/grubenv set boot_indeterminate=0 2>/dev/null || true
-    grub2-editenv /boot/grub2/grubenv set saved_entry=0 2>/dev/null || true
+    for envfile in /boot/grub2/grubenv /boot/efi/EFI/fedora/grubenv; do
+        if [ -f "$envfile" ] || [ -d "$(dirname "$envfile")" ]; then
+            grub2-editenv "$envfile" set menu_auto_hide=1 2>/dev/null || true
+            grub2-editenv "$envfile" set boot_success=1 2>/dev/null || true
+            grub2-editenv "$envfile" set boot_indeterminate=0 2>/dev/null || true
+            grub2-editenv "$envfile" set saved_entry=0 2>/dev/null || true
+        fi
+    done
 fi
 
+# Régénération de la configuration GRUB
 if command -v grub2-mkconfig >/dev/null 2>&1; then
     grub2-mkconfig -o /boot/grub2/grub.cfg 2>/dev/null || true
     if [ -d /boot/efi/EFI/fedora ]; then
@@ -397,6 +437,11 @@ fi
 
 # 3. Configuration et régénération du thème Plymouth Arrera
 echo "[3/8] Application du thème de démarrage Plymouth Arrera..."
+mkdir -p /etc/dracut.conf.d
+cat > /etc/dracut.conf.d/plymouth.conf << 'DRACUT_EOF'
+add_dracutmodules+=" plymouth "
+DRACUT_EOF
+
 mkdir -p /etc/plymouth
 cat > /etc/plymouth/plymouthd.conf << 'PLYMOUTH_EOF'
 [Daemon]
@@ -405,14 +450,23 @@ ShowDelay=0
 DeviceTimeout=8
 PLYMOUTH_EOF
 
-if command -v plymouth-set-default-theme >/dev/null 2>&1; then
-    plymouth-set-default-theme -R arrera 2>/dev/null || true
+if [ -d /usr/share/plymouth/themes/arrera ]; then
+    ln -sf /usr/share/plymouth/themes/arrera/arrera.plymouth /usr/share/plymouth/themes/default.plymouth 2>/dev/null || true
 fi
 
-if [ -n "$LATEST_KERNEL" ] && command -v dracut >/dev/null 2>&1; then
-    KVER=$(basename "$LATEST_KERNEL" | sed 's/vmlinuz-//')
-    echo "-> Régénération initramfs pour le noyau $KVER avec le thème Arrera..."
-    dracut -f "/boot/initramfs-${KVER}.img" "$KVER" 2>/dev/null || true
+if command -v plymouth-set-default-theme >/dev/null 2>&1; then
+    plymouth-set-default-theme arrera 2>/dev/null || true
+fi
+
+# Reconstruire explicitement l'initramfs pour TOUS les noyaux avec Plymouth et le thème Arrera
+if command -v dracut >/dev/null 2>&1; then
+    echo "-> Régénération complète de l'initramfs avec Dracut et le thème Arrera..."
+    dracut --regenerate-all --force --add plymouth 2>/dev/null || {
+        if [ -n "$LATEST_KERNEL" ]; then
+            KVER=$(basename "$LATEST_KERNEL" | sed 's/vmlinuz-//')
+            dracut -f --add plymouth "/boot/initramfs-${KVER}.img" "$KVER" 2>/dev/null || true
+        fi
+    }
 fi
 
 # 4. Forcer la cible graphique (GDM / GNOME)
@@ -492,7 +546,7 @@ kernelPattern: "^vmlinuz.*"
 loaderEntries:
   - "timeout 0"
   - "console-mode keep"
-kernelParams: [ "quiet", "rhgb", "splash" ]
+kernelParams: [ "rhgb", "quiet", "splash", "loglevel=3", "rd.udev.log_priority=3", "systemd.show_status=false", "vt.global_cursor_default=0" ]
 grubInstall: "grub2-install"
 grubMkconfig: "grub2-mkconfig"
 grubCfg: "/boot/grub2/grub.cfg"
