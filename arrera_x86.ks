@@ -276,28 +276,23 @@ echo "=========================================="
 %end
 
 # --------------------------------------------------------------------------
-# Fix Calamares : écrase shellprocess-postinstall.conf avec une version
-# sans variable bash (contourne KMacroExpander - Variables manquantes)
+# Fix Calamares : supprime shellprocess@postinstall de settings.conf
+# (sans heredoc - utilise sed pour compatibilite maximale avec kickstart)
 # --------------------------------------------------------------------------
 
 %post --log=/root/arrera-calamares-fix.log
-set -eux
 
-echo "=== Fix Calamares shellprocess-postinstall ==="
+echo "=== Fix Calamares : suppression de shellprocess@postinstall ==="
 
-mkdir -p /etc/calamares/modules
-cat > /etc/calamares/modules/shellprocess-postinstall.conf << 'CALAMARES_CONF_EOF'
-# Configuration du module shellprocess-postinstall pour Arrera Linux
-# Définit graphical.target comme cible de démarrage par défaut sur le système installé
----
-dontChroot: false
-timeout: 60
+# Supprimer shellprocess@postinstall de la sequence exec
+sed -i '/shellprocess@postinstall/d' /etc/calamares/settings.conf
 
-script:
-    - command: "systemctl set-default graphical.target"
-      timeout: 60
-CALAMARES_CONF_EOF
+# Supprimer le bloc d'instance "postinstall" (3 lignes: id, module, config)
+sed -i '/id:.*postinstall/{N;N;d}' /etc/calamares/settings.conf
 
-echo "-> shellprocess-postinstall.conf simplifié écrit."
-echo "=== Fix Calamares appliqué avec succès ==="
+# Verifier
+echo "-> Resultat grep settings.conf:"
+grep -i shellprocess /etc/calamares/settings.conf || echo "-> OK : plus de shellprocess dans settings.conf"
+
+echo "=== Fix Calamares applique avec succes ==="
 %end
