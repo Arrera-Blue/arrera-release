@@ -276,8 +276,8 @@ echo "=========================================="
 %end
 
 # --------------------------------------------------------------------------
-# Fix Calamares : écrase les fichiers cassés issus de l'ancienne version Copr
-# (contourne le problème KMacroExpander - Variables manquantes)
+# Fix Calamares : écrase shellprocess-postinstall.conf avec une version
+# sans variable bash (contourne KMacroExpander - Variables manquantes)
 # --------------------------------------------------------------------------
 
 %post --log=/root/arrera-calamares-fix.log
@@ -285,91 +285,19 @@ set -eux
 
 echo "=== Fix Calamares shellprocess-postinstall ==="
 
-# 1. Réécriture du conf Calamares (supprime les $VAR nues qui font planter KMacroExpander)
 mkdir -p /etc/calamares/modules
 cat > /etc/calamares/modules/shellprocess-postinstall.conf << 'CALAMARES_CONF_EOF'
 # Configuration du module shellprocess-postinstall pour Arrera Linux
-# Exécute la finalisation du système installé en chroot via le script dédié
+# Définit graphical.target comme cible de démarrage par défaut sur le système installé
 ---
 dontChroot: false
-timeout: 600
+timeout: 60
 
 script:
-    - command: "/usr/bin/arrera-postinstall.sh \"${gs[packagechooser_installmode]}\""
-      timeout: 600
+    - command: "systemctl set-default graphical.target"
+      timeout: 60
 CALAMARES_CONF_EOF
 
-echo "-> shellprocess-postinstall.conf réécrit."
-
-# 2. Création / mise à jour du script arrera-postinstall.sh
-cat > /usr/bin/arrera-postinstall.sh << 'POSTINSTALL_SCRIPT_EOF'
-#!/bin/bash
-# ==============================================================================
-# Arrera Linux - Finalisation post-installation (exécuté en chroot cible)
-# ==============================================================================
-set -e
-
-INSTALL_MODE="${1:-online}"
-echo "=========================================================="
-echo "   Arrera Linux - Finalisation post-installation"
-echo "=========================================================="
-echo "Mode d'installation sélectionné : $INSTALL_MODE"
-
-# 1. Vérification du mode d'installation et de la connectivité réseau
-IS_ONLINE=0
-if [ "$INSTALL_MODE" = "offline" ]; then
-    echo "[1/4] Mode hors-ligne choisi par l'utilisateur. Aucune mise à jour réseau."
-else
-    echo "[1/4] Mode en ligne sélectionné. Test de la connectivité Internet..."
-    if ping -c 1 -W 3 1.1.1.1 >/dev/null 2>&1 || ping -c 1 -W 3 8.8.8.8 >/dev/null 2>&1; then
-        IS_ONLINE=1
-        echo "-> Connexion Internet active et confirmée."
-    else
-        echo "-> ATTENTION : Mode en ligne demandé mais aucune connexion Internet détectée."
-        echo "-> Poursuite de l'installation en mode hors-ligne."
-    fi
-fi
-
-# 2. Mise à jour DNF complète si en mode en ligne et connecté
-if [ "$IS_ONLINE" -eq 1 ]; then
-    echo "[2/4] Mise à jour complète de tous les paquets du système via DNF..."
-    dnf clean all || true
-    dnf makecache -y || true
-    dnf upgrade -y --refresh || true
-else
-    echo "[2/4] Étape réseau ignorée (installation hors-ligne)."
-fi
-
-# 3. Application des réglages d'environnement Arrera
-echo "[3/4] Application des réglages par défaut Arrera..."
-if [ -d "/etc/dconf/db/local.d" ]; then
-    dconf update || true
-fi
-
-# Régénération du cache des icônes si présent
-if command -v gtk-update-icon-cache >/dev/null 2>&1; then
-    gtk-update-icon-cache -f /usr/share/icons/hicolor || true
-fi
-
-# 4. Nettoyage des résidus Live / Kiosque et activation du bureau GNOME
-echo "[4/4] Activation de GNOME et nettoyage des unités d'installation..."
-systemctl enable gdm || true
-systemctl set-default graphical.target || true
-rm -f /etc/systemd/system/arrera-kiosk.service
-rm -f /etc/systemd/system/multi-user.target.wants/arrera-kiosk.service
-rm -f /etc/gdm/custom.conf
-rm -f /home/*/Bureau/install-*.desktop /home/*/.config/autostart/install-*.desktop /etc/xdg/autostart/install-*.desktop
-rm -rf /root/install.log /var/log/calamares*
-rm -f /usr/bin/arrera-postinstall.sh
-
-echo "=========================================================="
-echo "   Post-installation Arrera terminée avec succès !"
-echo "=========================================================="
-exit 0
-POSTINSTALL_SCRIPT_EOF
-
-chmod +x /usr/bin/arrera-postinstall.sh
-echo "-> arrera-postinstall.sh installé dans /usr/bin/."
-
+echo "-> shellprocess-postinstall.conf simplifié écrit."
 echo "=== Fix Calamares appliqué avec succès ==="
 %end
