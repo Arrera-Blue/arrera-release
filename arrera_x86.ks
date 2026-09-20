@@ -297,7 +297,8 @@ cat > /usr/bin/arrera-postinstall.sh << 'POSTINSTALL_EOF'
 # Arrera Linux - Finalisation post-installation Calamares (chroot cible)
 # Aligne le système installé sur la configuration officielle Arrera (identique Anaconda)
 # ==============================================================================
-set -e
+# set -e désactivé : les erreurs mineures ne doivent pas faire échouer Calamares
+set +e
 
 echo "=========================================================="
 echo "   Arrera Linux - Finalisation post-installation"
@@ -305,7 +306,17 @@ echo "=========================================================="
 
 # 1. Vérification réseau et mise à jour DNF (Option A - compatible VirtualBox NAT & QEMU)
 echo "[1/8] Test de la connectivité Internet..."
-cp -f /etc/resolv.conf /etc/resolv.conf.bak 2>/dev/null || true
+
+# Sauvegarder la cible du lien symbolique resolv.conf (souvent systemd-resolved)
+RESOLV_IS_LINK=0
+RESOLV_TARGET=""
+if [ -L /etc/resolv.conf ]; then
+    RESOLV_IS_LINK=1
+    RESOLV_TARGET=$(readlink /etc/resolv.conf 2>/dev/null || true)
+fi
+
+# Supprimer le lien symbolique (souvent brisé dans le chroot) avant d'écrire un fichier régulier
+rm -f /etc/resolv.conf 2>/dev/null || true
 cat > /etc/resolv.conf << 'DNS_EOF'
 nameserver 1.1.1.1
 nameserver 8.8.8.8
@@ -330,8 +341,12 @@ else
     echo "-> Étape réseau ignorée : installation locale directe."
 fi
 
-if [ -f /etc/resolv.conf.bak ]; then
-    mv -f /etc/resolv.conf.bak /etc/resolv.conf 2>/dev/null || true
+# Restauration propre du lien symbolique resolv.conf pour systemd-resolved
+rm -f /etc/resolv.conf 2>/dev/null || true
+if [ "$RESOLV_IS_LINK" -eq 1 ] && [ -n "$RESOLV_TARGET" ]; then
+    ln -sf "$RESOLV_TARGET" /etc/resolv.conf 2>/dev/null || true
+else
+    ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf 2>/dev/null || true
 fi
 
 # 2. Nettoyage des noyaux Live et configuration complète de GRUB
@@ -366,7 +381,8 @@ if [ -f /usr/share/arrera-branding/os-release ]; then
     cp -f /usr/share/arrera-branding/os-release /etc/os-release 2>/dev/null || true
 fi
 
-LATEST_KERNEL=$(ls -v /boot/vmlinuz-* 2>/dev/null | grep -v 'rescue' | tail -n 1)
+# Identifier le noyau le plus récent et le définir comme SEUL noyau par défaut
+LATEST_KERNEL=$(ls -v /boot/vmlinuz-* 2>/dev/null | grep -v 'rescue' | tail -n 1 || true)
 if [ -n "$LATEST_KERNEL" ]; then
     echo "-> Noyau officiel sélectionné par défaut : $LATEST_KERNEL"
     if command -v grubby >/dev/null 2>&1; then
@@ -381,9 +397,9 @@ if [ -d /boot/loader/entries ]; then
     for entry in /boot/loader/entries/*.conf; do
         [ -f "$entry" ] || continue
         # Nettoyer les anciens arguments et rd.live.image
-        sed -i -E 's/\s+rd\.live\.image//g' "$entry"
-        sed -i -E 's/\s+(rhgb|quiet|splash|loglevel=[0-9]+|rd\.udev\.log_priority=[0-9]+|systemd\.show_status=\w+|vt\.global_cursor_default=[0-9]+)//g' "$entry"
-        sed -i "/^options / s/$/ ${SILENT_CMDLINE}/" "$entry"
+        sed -i -E 's/\s+rd\.live\.image//g' "$entry" 2>/dev/null || true
+        sed -i -E 's/\s+(rhgb|quiet|splash|loglevel=[0-9]+|rd\.udev\.log_priority=[0-9]+|systemd\.show_status=\w+|vt\.global_cursor_default=[0-9]+)//g' "$entry" 2>/dev/null || true
+        sed -i "/^options / s/$/ ${SILENT_CMDLINE}/" "$entry" 2>/dev/null || true
         sed -i 's/^title Fedora.*/title Arrera Blue-dev 2026/g' "$entry" 2>/dev/null || true
         sed -i 's/^title Arrera.*/title Arrera Blue-dev 2026/g' "$entry" 2>/dev/null || true
     done
