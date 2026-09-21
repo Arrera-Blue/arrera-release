@@ -547,9 +547,6 @@ if [ -d /sys/firmware/efi ] || [ -d /boot/efi ] || grep -q '/boot/efi' /etc/fsta
     echo "-> Écriture du stub GRUB EFI (UUID: ${BOOT_UUID:-auto}, chemin: ${GRUB_RELPATH})..."
     cat > /boot/efi/EFI/fedora/grub.cfg << STUB_EOF
 search --no-floppy --fs-uuid --set=dev ${BOOT_UUID}
-if [ -z "\$dev" ]; then
-    search --no-floppy --file --set=dev ${GRUB_RELPATH}/grub.cfg
-fi
 set prefix=(\$dev)${GRUB_RELPATH}
 export \$prefix
 configfile \$prefix/grub.cfg
