@@ -123,7 +123,20 @@ cp "$KS_TEMPLATE" "$KS_FINAL"
 # Retirer la ligne 'graphical' si présente (livemedia-creator interdit les modes d'affichage)
 sed -i '/^graphical$/d' "$KS_FINAL"
 
+# Substitution explicite des variables pour Anaconda (évite l'erreur "Installation source non remplie")
+sed -i "s/\\\$releasever/44/g" "$KS_FINAL"
+sed -i "s/\\\$basearch/$ARCH/g" "$KS_FINAL"
+
 ok "Kickstart final généré : $KS_FINAL"
+
+# Vérification préalable de la connectivité aux dépôts
+info "Vérification de l'accessibilité des dépôts..."
+if ! curl -sf --connect-timeout 6 "https://mirrors.fedoraproject.org/metalink?repo=fedora-44&arch=$ARCH" >/dev/null; then
+    warn "Attention : le miroir Fedora pour $ARCH met du temps à répondre (vérifiez le réseau de la VM)."
+fi
+if ! curl -sf -L --connect-timeout 6 "https://download.copr.fedorainfracloud.org/results/arrera-software/arrera-blue/fedora-44-$ARCH/repodata/repomd.xml" >/dev/null; then
+    warn "Attention : le dépôt Copr Arrera ($ARCH) semble temporairement inaccessible."
+fi
 
 # --------------------------------------------------------------------------
 # 5. Nettoyage de l'ancien résultat et des dossiers temporaires
