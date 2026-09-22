@@ -129,6 +129,14 @@ ok "Kickstart final généré : $KS_FINAL"
 # 5. Nettoyage de l'ancien résultat et des dossiers temporaires
 # --------------------------------------------------------------------------
 
+info "Nettoyage des points de montage résiduels des builds précédents..."
+for mnt in $(mount | grep -E "lmc-|lorax|/var/tmp/lmc" | awk '{print $3}' | sort -r); do
+    warn "Démontage forcé de : $mnt"
+    umount -l "$mnt" 2>/dev/null || true
+done
+gpgconf --kill all 2>/dev/null || true
+pkill -9 -f gpg-agent 2>/dev/null || true
+
 info "Nettoyage des fichiers temporaires des builds précédents dans /var/tmp..."
 rm -rf /var/tmp/lmc-work-* /var/tmp/lorax.imgutils.* /var/tmp/lmc-disk-* /var/tmp/lmc-* "$RESULT_DIR" 2>/dev/null || true
 dnf clean all 2>/dev/null || true

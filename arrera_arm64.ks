@@ -322,6 +322,14 @@ SERVICE_EOF
 
 systemctl enable arrera-anaconda-live.service
 
+# Libération des verrous et arrêt des démons d'arrière-plan résiduels
+# (Évite l'erreur EBUSY / umount of /tmp failed 32 lors du démontage Anaconda)
+gpgconf --kill all 2>/dev/null || true
+pkill -9 -f gpg-agent 2>/dev/null || true
+pkill -9 -f dbus-daemon 2>/dev/null || true
+pkill -9 -f flatpak 2>/dev/null || true
+sync
+
 echo "=========================================="
 echo " FIN DE LA CONFIGURATION ARRERA LINUX    "
 echo "=========================================="
