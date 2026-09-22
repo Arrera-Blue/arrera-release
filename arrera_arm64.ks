@@ -392,105 +392,39 @@ if [ -n "$LATEST_KERNEL" ]; then
     fi
 fi
 
-# Détection de la partition racine (/) et de la partition /boot si séparée
-TARGET_ROOT_DEV=$(findmnt -n -o SOURCE / 2>/dev/null || df / 2>/dev/null | tail -1 | awk '{print $1}')
-TARGET_ROOT_UUID=$(blkid -s UUID -o value "$TARGET_ROOT_DEV" 2>/dev/null || true)
-TARGET_ROOT_FSTYPE=$(blkid -s TYPE -o value "$TARGET_ROOT_DEV" 2>/dev/null || true)
-
-IS_SEPARATE_BOOT=0
-if mountpoint -q /boot 2>/dev/null; then
-    IS_SEPARATE_BOOT=1
-    BOOT_DEV=$(findmnt -n -o SOURCE /boot 2>/dev/null || df /boot 2>/dev/null | tail -1 | awk '{print $1}')
-    BOOT_UUID=$(blkid -s UUID -o value "$BOOT_DEV" 2>/dev/null || true)
-    GRUB_RELPATH="/grub2"
-else
-    BOOT_DEV="$TARGET_ROOT_DEV"
-    BOOT_UUID="$TARGET_ROOT_UUID"
-    GRUB_RELPATH="/boot/grub2"
-fi
-
-if [ -z "$BOOT_UUID" ] && command -v grub2-probe >/dev/null 2>&1; then
-    BOOT_UUID=$(grub2-probe --target=fs_uuid /boot 2>/dev/null || true)
-fi
-
-echo "-> Racine cible : $TARGET_ROOT_DEV (UUID: $TARGET_ROOT_UUID, fstype: $TARGET_ROOT_FSTYPE)"
-echo "-> Partition boot : $BOOT_DEV (UUID: $BOOT_UUID, chemin relatif: $GRUB_RELPATH)"
-
 # Configuration des paramètres silencieux et Plymouth pour toutes les entrées BLS
 SILENT_CMDLINE="rhgb quiet splash loglevel=3 rd.udev.log_priority=3 systemd.show_status=false vt.global_cursor_default=0"
 
-# Définition du paramètre root pour le noyau (identique à Anaconda)
-if [ -n "$TARGET_ROOT_UUID" ]; then
-    ROOT_PARAM="root=UUID=${TARGET_ROOT_UUID}"
-elif [ -n "$TARGET_ROOT_DEV" ]; then
-    ROOT_PARAM="root=${TARGET_ROOT_DEV}"
-else
-    ROOT_PARAM=""
-fi
-
-# Sauvegarde de la ligne de commande officielle du noyau (/etc/kernel/cmdline)
-mkdir -p /etc/kernel
-if [ -n "$ROOT_PARAM" ]; then
-    echo "${ROOT_PARAM} ro ${SILENT_CMDLINE}" > /etc/kernel/cmdline
-fi
-
-# Mise à jour de toutes les entrées BLS (/boot/loader/entries/*.conf)
 if [ -d /boot/loader/entries ]; then
     for entry in /boot/loader/entries/*.conf; do
         [ -f "$entry" ] || continue
-        echo "-> Configuration entrée BLS : $(basename "$entry")"
-
-        # Remplacement de root=... par le véritable UUID cible et nettoyage live
-        if [ -n "$ROOT_PARAM" ]; then
-            sed -i -E "s|root=[^ ]+|${ROOT_PARAM} ro|g" "$entry" 2>/dev/null || true
-        fi
+        # Nettoyer les anciens arguments et rd.live.image
         sed -i -E 's/\s+rd\.live\.image//g' "$entry" 2>/dev/null || true
         sed -i -E 's/\s+(rhgb|quiet|splash|loglevel=[0-9]+|rd\.udev\.log_priority=[0-9]+|systemd\.show_status=\w+|vt\.global_cursor_default=[0-9]+)//g' "$entry" 2>/dev/null || true
         sed -i "/^options / s/$/ ${SILENT_CMDLINE}/" "$entry" 2>/dev/null || true
-
-        # Correction des chemins linux et initrd selon que /boot est séparé ou non
-        if [ "$IS_SEPARATE_BOOT" -eq 0 ]; then
-            # /boot est dans la racine : GRUB doit chercher dans /boot/
-            sed -i -E 's|^linux\s+/vmlinuz|linux /boot/vmlinuz|g' "$entry" 2>/dev/null || true
-            sed -i -E 's|^initrd\s+/initramfs|initrd /boot/initramfs|g' "$entry" 2>/dev/null || true
-        else
-            # /boot est une partition dédiée : les chemins doivent être /vmlinuz
-            sed -i -E 's|^linux\s+/boot/vmlinuz|linux /vmlinuz|g' "$entry" 2>/dev/null || true
-            sed -i -E 's|^initrd\s+/boot/initramfs|initrd /initramfs|g' "$entry" 2>/dev/null || true
-        fi
-
-        # Titre officiel Arrera
         sed -i 's/^title Fedora.*/title Arrera Blue-dev 2026/g' "$entry" 2>/dev/null || true
         sed -i 's/^title Arrera.*/title Arrera Blue-dev 2026/g' "$entry" 2>/dev/null || true
     done
 fi
 
-# Liens symboliques de secours à la racine si /boot n'est pas séparé
-if [ "$IS_SEPARATE_BOOT" -eq 0 ]; then
-    echo "-> Création des liens symboliques vmlinuz / initramfs à la racine..."
-    for v in /boot/vmlinuz-*; do
-        [ -f "$v" ] || continue
-        ln -sf "boot/$(basename "$v")" "/$(basename "$v")" 2>/dev/null || true
-    done
-    for i in /boot/initramfs-*; do
-        [ -f "$i" ] || continue
-        ln -sf "boot/$(basename "$i")" "/$(basename "$i")" 2>/dev/null || true
-    done
-fi
-
 if command -v grubby >/dev/null 2>&1; then
     grubby --update-kernel=ALL --remove-args="rd.live.image" 2>/dev/null || true
-    if [ -n "$ROOT_PARAM" ]; then
-        grubby --update-kernel=ALL --args="${ROOT_PARAM} ro ${SILENT_CMDLINE}" 2>/dev/null || true
-    fi
+    grubby --update-kernel=ALL --args="${SILENT_CMDLINE}" 2>/dev/null || true
 fi
 
-# Configuration stricte de /etc/default/grub pour masquer le menu
+# Sauvegarder la ligne de commande par défaut pour les futures mises à jour de noyau (/etc/kernel/cmdline)
+ROOT_ARG=$(grep -o 'root=[^ ]*' /boot/loader/entries/*.conf 2>/dev/null | head -n 1 || true)
+if [ -n "$ROOT_ARG" ]; then
+    mkdir -p /etc/kernel
+    echo "${ROOT_ARG} ro ${SILENT_CMDLINE}" > /etc/kernel/cmdline
+fi
+
+# Configuration stricte de /etc/default/grub pour masquer totalement le menu
 mkdir -p /etc/default
 cat > /etc/default/grub << 'GRUB_EOF'
-GRUB_TIMEOUT=2
+GRUB_TIMEOUT=0
 GRUB_TIMEOUT_STYLE=hidden
-GRUB_RECORDFAIL_TIMEOUT=2
+GRUB_RECORDFAIL_TIMEOUT=0
 GRUB_DISTRIBUTOR="Arrera Blue-dev 2026"
 GRUB_DEFAULT=0
 GRUB_DISABLE_SUBMENU=true
@@ -599,13 +533,38 @@ if [ -d /sys/firmware/efi ] || [ -d /boot/efi ] || grep -q '/boot/efi' /etc/fsta
     fi
 
     if [ "$STUB_OK" -eq 0 ]; then
-        echo "-> Écriture du stub GRUB EFI conforme (UUID: ${BOOT_UUID:-auto}, chemin: ${GRUB_RELPATH})..."
-        cat > /boot/efi/EFI/fedora/grub.cfg << STUB_EOF
+        BOOT_UUID=""
+        GRUB_RELPATH="/boot/grub2"
+
+        if mountpoint -q /boot; then
+            BOOT_DEV=$(findmnt -n -o SOURCE /boot 2>/dev/null || df /boot 2>/dev/null | tail -1 | awk '{print $1}')
+            GRUB_RELPATH="/grub2"
+        else
+            BOOT_DEV=$(findmnt -n -o SOURCE / 2>/dev/null || df / 2>/dev/null | tail -1 | awk '{print $1}')
+            GRUB_RELPATH="/boot/grub2"
+        fi
+
+        if [ -n "$BOOT_DEV" ]; then
+            BOOT_UUID=$(blkid -s UUID -o value "$BOOT_DEV" 2>/dev/null || true)
+        fi
+
+        if [ -z "$BOOT_UUID" ] && command -v grub2-probe >/dev/null 2>&1; then
+            echo "-> AVERTISSEMENT : BOOT_UUID vide, tentative de récupération par grub2-probe..."
+            BOOT_UUID=$(grub2-probe --target=fs_uuid /boot 2>/dev/null || true)
+        fi
+
+        if [ -n "$BOOT_UUID" ]; then
+            echo "-> Écriture du stub GRUB EFI (UUID: ${BOOT_UUID}, chemin: ${GRUB_RELPATH})..."
+            cat > /boot/efi/EFI/fedora/grub.cfg << STUB_EOF
 search --no-floppy --fs-uuid --set=dev ${BOOT_UUID}
 set prefix=(\$dev)${GRUB_RELPATH}
-export prefix
+export \$prefix
 configfile \$prefix/grub.cfg
 STUB_EOF
+        else
+            echo "-> ERREUR CRITIQUE : Impossible de déterminer l'UUID de la partition boot !"
+            echo "-> Le stub EFI ne sera pas généré correctement."
+        fi
     fi
 
     # Le même stub est copié dans /boot/efi/EFI/BOOT/grub.cfg pour le démarrage fallback
@@ -633,13 +592,10 @@ STUB_EOF
             fi
 
             if [ -n "$ESP_DISK" ] && [ -n "$ESP_PART" ]; then
-                echo "-> Enregistrement des entrées UEFI NVRAM ($ESP_DISK partition $ESP_PART)..."
+                echo "-> Nettoyage et enregistrement de l'entrée UEFI Arrera ($ESP_DISK partition $ESP_PART)..."
                 for bnum in $(efibootmgr 2>/dev/null | grep -iE "Arrera|fedora" | awk '{print $1}' | tr -d 'Boot*' | tr -d ':'); do
                     efibootmgr -b "$bnum" -B 2>/dev/null || true
                 done
-                # Enregistrement avec label "fedora" (attendu par Fallback fbaa64.efi et firmware EDK2)
-                efibootmgr -c -d "$ESP_DISK" -p "$ESP_PART" -w -L "fedora" -l "\\EFI\\fedora\\$SHIM_BIN" 2>/dev/null || true
-                # Enregistrement avec label "Arrera Blue 2026"
                 efibootmgr -c -d "$ESP_DISK" -p "$ESP_PART" -w -L "Arrera Blue 2026" -l "\\EFI\\fedora\\$SHIM_BIN" 2>/dev/null || true
             fi
         fi
