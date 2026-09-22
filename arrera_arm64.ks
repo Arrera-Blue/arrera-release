@@ -33,8 +33,10 @@ repo --name="updates" --metalink="https://mirrors.fedoraproject.org/metalink?rep
 repo --name="copr-arrera-blue" --baseurl="https://download.copr.fedorainfracloud.org/results/arrera-software/arrera-blue/fedora-$releasever-$basearch/" --cost=100
 
 # Partitionnement (taille fixe requise par livemedia-creator --no-virt)
+# ARM64 est 100% UEFI : la partition ESP est OBLIGATOIRE (pas de BIOS Legacy)
 zerombr
 clearpart --all --initlabel
+part /boot/efi --size=600 --fstype=efi
 part / --size=10240 --fstype=ext4
 
 # --------------------------------------------------------------------------
@@ -477,9 +479,18 @@ esac
 if [ -d /sys/firmware/efi ] || [ -d /boot/efi ] || grep -q '/boot/efi' /etc/fstab 2>/dev/null; then
     echo "-> Système UEFI détecté ($TARGET_ARCH) : finalisation de la partition ESP..."
     
-    # S'assurer que /boot/efi est bien monté
+    # S'assurer que /boot/efi est bien monté (crucial dans le chroot Calamares)
     if ! mountpoint -q /boot/efi; then
-        mount /boot/efi 2>/dev/null || true
+        # Tenter le montage depuis fstab (le module fstab de Calamares l'a déjà écrit)
+        if grep -q '/boot/efi' /etc/fstab 2>/dev/null; then
+            ESP_FSTAB_DEV=$(awk '$2 == "/boot/efi" {print $1}' /etc/fstab | head -n 1)
+            if [ -n "$ESP_FSTAB_DEV" ]; then
+                mkdir -p /boot/efi
+                mount "$ESP_FSTAB_DEV" /boot/efi 2>/dev/null || mount /boot/efi 2>/dev/null || true
+            fi
+        else
+            mount /boot/efi 2>/dev/null || true
+        fi
     fi
 
     mkdir -p /boot/efi/EFI/fedora
@@ -502,6 +513,14 @@ if [ -d /sys/firmware/efi ] || [ -d /boot/efi ] || grep -q '/boot/efi' /etc/fsta
     if [ ! -f "/boot/efi/EFI/fedora/$GRUB_BIN" ]; then
         FOUND_GRUB=$(find /usr -name "$GRUB_BIN" 2>/dev/null | head -n 1 || true)
         [ -n "$FOUND_GRUB" ] && cp -f "$FOUND_GRUB" "/boot/efi/EFI/fedora/$GRUB_BIN" 2>/dev/null || true
+    fi
+
+    # Fallback ARM64 : si les binaires EFI sont toujours absents, forcer grub2-install
+    if [ "$TARGET_ARCH" = "aarch64" ] && [ ! -f "/boot/efi/EFI/fedora/$GRUB_BIN" ]; then
+        echo "-> ARM64 : binaires EFI absents, exécution de grub2-install en fallback..."
+        if command -v grub2-install >/dev/null 2>&1; then
+            grub2-install --target=arm64-efi --efi-directory=/boot/efi --bootloader-id=fedora --removable 2>/dev/null || true
+        fi
     fi
 
     # Création du chemin de secours amovible /EFI/BOOT/ (indispensable VM ARM64 & firmwares sans NVRAM)
@@ -548,9 +567,27 @@ if [ -d /sys/firmware/efi ] || [ -d /boot/efi ] || grep -q '/boot/efi' /etc/fsta
             BOOT_UUID=$(blkid -s UUID -o value "$BOOT_DEV" 2>/dev/null || true)
         fi
 
+        # Fallback 1 : grub2-probe
         if [ -z "$BOOT_UUID" ] && command -v grub2-probe >/dev/null 2>&1; then
             echo "-> AVERTISSEMENT : BOOT_UUID vide, tentative de récupération par grub2-probe..."
             BOOT_UUID=$(grub2-probe --target=fs_uuid /boot 2>/dev/null || true)
+        fi
+
+        # Fallback 2 : lire l'UUID depuis /etc/fstab (fiable dans le chroot Calamares)
+        if [ -z "$BOOT_UUID" ] && [ -f /etc/fstab ]; then
+            echo "-> AVERTISSEMENT : BOOT_UUID toujours vide, lecture depuis /etc/fstab..."
+            # Chercher d'abord une partition /boot séparée, sinon la racine /
+            FSTAB_UUID=$(awk '$2 == "/boot" && $1 ~ /^UUID=/ {sub(/^UUID=/, "", $1); print $1}' /etc/fstab | head -n 1)
+            if [ -n "$FSTAB_UUID" ]; then
+                BOOT_UUID="$FSTAB_UUID"
+                GRUB_RELPATH="/grub2"
+            else
+                FSTAB_UUID=$(awk '$2 == "/" && $1 ~ /^UUID=/ {sub(/^UUID=/, "", $1); print $1}' /etc/fstab | head -n 1)
+                if [ -n "$FSTAB_UUID" ]; then
+                    BOOT_UUID="$FSTAB_UUID"
+                    GRUB_RELPATH="/boot/grub2"
+                fi
+            fi
         fi
 
         if [ -n "$BOOT_UUID" ]; then
