@@ -33,15 +33,17 @@ repo --name="updates" --metalink="https://mirrors.fedoraproject.org/metalink?rep
 repo --name="copr-arrera-blue" --baseurl="https://download.copr.fedorainfracloud.org/results/arrera-software/arrera-blue/fedora-$releasever-$basearch/" --cost=100
 
 # Partitionnement (taille fixe requise par livemedia-creator --no-virt)
+# ARM64 est 100% UEFI : la partition ESP est OBLIGATOIRE (pas de BIOS Legacy)
 zerombr
 clearpart --all --initlabel
+part /boot/efi --size=600 --fstype=efi
 part / --size=10240 --fstype=ext4
 
 # --------------------------------------------------------------------------
 # Services
 # --------------------------------------------------------------------------
 
-services --enabled=NetworkManager,gdm,firewalld
+services --enabled=NetworkManager,firewalld,arrera-kiosk --disabled=gdm
 
 # --------------------------------------------------------------------------
 # Paquets
@@ -167,12 +169,13 @@ google-noto-sans-fonts
 google-noto-sans-mono-fonts
 dejavu-sans-fonts
 
-# === Installateur officiel Fedora (Anaconda WebUI) ===
-anaconda
-anaconda-webui
-anaconda-install-env-deps
-anaconda-live
-firefox
+# === Installateur Calamares et configuration Arrera (Kiosque) ===
+calamares
+arrera-installer
+cage
+squashfs-tools
+qt6-qtdeclarative
+qt6-qtquickcontrols2
 
 %end
 
@@ -191,13 +194,34 @@ echo "=========================================="
 echo "arrera ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/arrera
 chmod 0440 /etc/sudoers.d/arrera
 
-# Activation des services
+# Activation des services pour le média Live (Kiosque Calamares direct sans GNOME)
 systemctl enable NetworkManager
-systemctl enable gdm
 systemctl enable firewalld
+systemctl enable arrera-kiosk.service
+systemctl disable gdm || true
 
-# Forcer le démarrage en mode graphique (sinon GDM ne se lance pas)
-systemctl set-default graphical.target
+# Cible par défaut pour le Kiosque
+systemctl set-default multi-user.target
+
+# Configuration Plymouth par défaut (thème Arrera)
+mkdir -p /etc/dracut.conf.d
+cat > /etc/dracut.conf.d/plymouth.conf << 'DRACUT_LIVE_EOF'
+add_dracutmodules+=" plymouth "
+DRACUT_LIVE_EOF
+
+mkdir -p /etc/plymouth
+cat > /etc/plymouth/plymouthd.conf << 'PLYMOUTH_LIVE_EOF'
+[Daemon]
+Theme=arrera
+ShowDelay=0
+DeviceTimeout=8
+PLYMOUTH_LIVE_EOF
+
+ln -sf /usr/share/plymouth/themes/arrera/arrera.plymouth /usr/share/plymouth/themes/default.plymouth 2>/dev/null || true
+
+# Sauvegarde des fichiers EFI dans le système pour Calamares
+mkdir -p /usr/share/arrera-efi
+cp -a /boot/efi/EFI /usr/share/arrera-efi/ 2>/dev/null || true
 
 # ================================================================
 # Configuration du dépôt Copr Arrera avec clé GPG officielle
@@ -217,11 +241,8 @@ enabled_metadata=1
 cost=100
 COPR_REPO_EOF
 
-# Importer la clé publique GPG officielle du Copr Arrera (avec timeout sécurisé)
-curl --silent --max-time 10 --retry 2 \
-    https://download.copr.fedorainfracloud.org/results/arrera-software/arrera-blue/pubkey.gpg \
-    -o /tmp/arrera-copr.gpg 2>/dev/null && rpm --import /tmp/arrera-copr.gpg 2>/dev/null || true
-rm -f /tmp/arrera-copr.gpg
+# Importer la clé publique GPG officielle du Copr Arrera
+rpm --import https://download.copr.fedorainfracloud.org/results/arrera-software/arrera-blue/pubkey.gpg 2>/dev/null || true
 
 # ================================================================
 # Configuration de la session Live (auto-login + installateur)
@@ -241,52 +262,22 @@ polkit.addRule(function(action, subject) {
 });
 POLKIT_LIVE_EOF
 
-cat > /etc/polkit-1/rules.d/50-anaconda.rules <<'POLKIT_ANACONDA_EOF'
+cat > /etc/polkit-1/rules.d/50-calamares.rules <<'POLKIT_CALAMARES_EOF'
 polkit.addRule(function(action, subject) {
-    if (action.id.indexOf("org.fedoraproject.anaconda") === 0 ||
+    if (action.id.indexOf("com.github.calamares") === 0 ||
+        action.id.indexOf("io.calamares") === 0 ||
         action.id.indexOf("org.freedesktop.policykit.exec") === 0 ||
         action.id.indexOf("org.freedesktop.udisks2") === 0) {
         return polkit.Result.YES;
     }
 });
-POLKIT_ANACONDA_EOF
+POLKIT_CALAMARES_EOF
 
 # ================================================================
-# Service de mise à jour système & Flatpaks au premier démarrage
-# (Ne s'exécute JAMAIS sur le Live, uniquement sur le système installé connecté)
+# Applications Flatpak (Saveurs bureau : Home / School)
 # ================================================================
-
-# Pré-enregistrer le dépôt Flathub
 if command -v flatpak &>/dev/null; then
-    flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
-fi
-
-mkdir -p /usr/lib/arrera
-cat > /usr/lib/arrera/arrera-firstboot-update.sh << 'UPDATE_SCRIPT_EOF'
-#!/bin/bash
-set -u
-LOG="/var/log/arrera-firstboot-update.log"
-exec >> "$LOG" 2>&1
-echo "=== Démarrage mise à jour système Arrera : $(date) ==="
-
-# Attendre que le réseau soit opérationnel (max 120s)
-for i in $(seq 1 24); do
-    if curl --silent --max-time 5 https://fedoraproject.org > /dev/null 2>&1 || \
-       curl --silent --max-time 5 https://google.com > /dev/null 2>&1; then
-        echo "Réseau confirmé disponible."
-        break
-    fi
-    echo "En attente d'une connexion réseau ($i/24)..."
-    sleep 5
-done
-
-# 1. Mise à jour complète de tous les paquets du système (DNF)
-echo "-> Mise à jour de tous les paquets système..."
-dnf upgrade -y --refresh || true
-
-# 2. Installation des applications Flatpak
-if command -v flatpak &>/dev/null; then
-    echo "-> Installation des Flatpaks officiels..."
+    echo "Configuration de Flathub et installation des Flatpaks..."
     flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
     flatpak install -y --noninteractive flathub \
         it.mijorus.gearlever \
@@ -295,88 +286,566 @@ if command -v flatpak &>/dev/null; then
         com.github.tchx84.Flatseal 2>/dev/null || true
 fi
 
-echo "=== Système Arrera 100% à jour : $(date) ==="
-systemctl disable arrera-firstboot-update.service || true
-UPDATE_SCRIPT_EOF
+# S'assurer qu'aucun autologin GDM résiduel n'est configuré
+rm -f /etc/gdm/custom.conf
 
-chmod +x /usr/lib/arrera/arrera-firstboot-update.sh
+# ================================================================
+# Configuration Calamares pour finaliser le système installé
+# (Rend l'installation Calamares 100% identique à Anaconda)
+# ================================================================
 
-cat > /etc/systemd/system/arrera-firstboot-update.service << 'UPDATE_SERVICE_EOF'
+# 1. Écriture du script de finalisation du système installé
+cat > /usr/bin/arrera-postinstall.sh << 'POSTINSTALL_EOF'
+#!/bin/bash
+# ==============================================================================
+# Arrera Linux - Finalisation post-installation Calamares (chroot cible)
+# Aligne le système installé sur la configuration officielle Arrera (identique Anaconda)
+# ==============================================================================
+# set -e désactivé : les erreurs mineures ne doivent pas faire échouer Calamares
+set +e
+
+echo "=========================================================="
+echo "   Arrera Linux - Finalisation post-installation"
+echo "=========================================================="
+
+# 1. Vérification réseau et mise à jour DNF (Option A - compatible VirtualBox NAT & QEMU)
+echo "[1/8] Test de la connectivité Internet..."
+
+# Sauvegarder la cible du lien symbolique resolv.conf (souvent systemd-resolved)
+RESOLV_IS_LINK=0
+RESOLV_TARGET=""
+if [ -L /etc/resolv.conf ]; then
+    RESOLV_IS_LINK=1
+    RESOLV_TARGET=$(readlink /etc/resolv.conf 2>/dev/null || true)
+fi
+
+# Supprimer le lien symbolique (souvent brisé dans le chroot) avant d'écrire un fichier régulier
+rm -f /etc/resolv.conf 2>/dev/null || true
+cat > /etc/resolv.conf << 'DNS_EOF'
+nameserver 1.1.1.1
+nameserver 8.8.8.8
+DNS_EOF
+
+IS_ONLINE=0
+if curl -s --connect-timeout 4 -m 6 https://fedoraproject.org >/dev/null 2>&1 || \
+   curl -s --connect-timeout 4 -m 6 https://google.com >/dev/null 2>&1 || \
+   curl -s --connect-timeout 3 -m 5 http://1.1.1.1 >/dev/null 2>&1 || \
+   ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then
+    IS_ONLINE=1
+fi
+
+if [ "$IS_ONLINE" -eq 1 ]; then
+    echo "-> Connexion Internet confirmée !"
+    echo "-> Rafraîchissement des dépôts et mise à jour des paquets Arrera..."
+    dnf makecache -y || true
+    dnf upgrade -y --refresh || true
+    echo "-> Système mis à jour avec succès."
+else
+    echo "-> Aucune connexion Internet détectée (ou mode hors-ligne)."
+    echo "-> Étape réseau ignorée : installation locale directe."
+fi
+
+# Restauration propre du lien symbolique resolv.conf pour systemd-resolved
+rm -f /etc/resolv.conf 2>/dev/null || true
+if [ "$RESOLV_IS_LINK" -eq 1 ] && [ -n "$RESOLV_TARGET" ]; then
+    ln -sf "$RESOLV_TARGET" /etc/resolv.conf 2>/dev/null || true
+else
+    ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf 2>/dev/null || true
+fi
+
+# 2. Nettoyage des noyaux Live et configuration complète de GRUB
+echo "[2/8] Nettoyage des anciens noyaux et configuration de GRUB..."
+
+CURRENT_MACHINE_ID=$(cat /etc/machine-id 2>/dev/null || true)
+
+if [ -n "$CURRENT_MACHINE_ID" ] && [ -d /boot/loader/entries ]; then
+    for conf in /boot/loader/entries/*.conf; do
+        [ -f "$conf" ] || continue
+        if ! grep -q "$CURRENT_MACHINE_ID" <<< "$(basename "$conf")"; then
+            echo "-> Suppression entrée BLS obsolète du Live : $(basename "$conf")"
+            rm -f "$conf"
+        fi
+    done
+fi
+
+if [ -n "$CURRENT_MACHINE_ID" ]; then
+    for f in /boot/*rescue*; do
+        [ -f "$f" ] || continue
+        if ! grep -q "$CURRENT_MACHINE_ID" <<< "$f"; then
+            echo "-> Suppression rescue obsolète du Live : $(basename "$f")"
+            rm -f "$f"
+        fi
+    done
+fi
+
+rm -f /boot/loader/entries/*rescue*.conf 2>/dev/null || true
+
+if [ -f /usr/share/arrera-branding/os-release ]; then
+    cp -f /usr/share/arrera-branding/os-release /usr/lib/os-release 2>/dev/null || true
+    cp -f /usr/share/arrera-branding/os-release /etc/os-release 2>/dev/null || true
+fi
+
+# Identifier le noyau le plus récent et le définir comme SEUL noyau par défaut
+LATEST_KERNEL=$(ls -v /boot/vmlinuz-* 2>/dev/null | grep -v 'rescue' | tail -n 1 || true)
+if [ -n "$LATEST_KERNEL" ]; then
+    echo "-> Noyau officiel sélectionné par défaut : $LATEST_KERNEL"
+    if command -v grubby >/dev/null 2>&1; then
+        grubby --set-default="$LATEST_KERNEL" 2>/dev/null || true
+    fi
+fi
+
+# Configuration des paramètres silencieux et Plymouth pour toutes les entrées BLS
+SILENT_CMDLINE="rhgb quiet splash loglevel=3 rd.udev.log_priority=3 systemd.show_status=false vt.global_cursor_default=0"
+
+if [ -d /boot/loader/entries ]; then
+    for entry in /boot/loader/entries/*.conf; do
+        [ -f "$entry" ] || continue
+        # Nettoyer les anciens arguments et rd.live.image
+        sed -i -E 's/\s+rd\.live\.image//g' "$entry" 2>/dev/null || true
+        sed -i -E 's/\s+(rhgb|quiet|splash|loglevel=[0-9]+|rd\.udev\.log_priority=[0-9]+|systemd\.show_status=\w+|vt\.global_cursor_default=[0-9]+)//g' "$entry" 2>/dev/null || true
+        sed -i "/^options / s/$/ ${SILENT_CMDLINE}/" "$entry" 2>/dev/null || true
+        sed -i 's/^title Fedora.*/title Arrera Blue-dev 2026/g' "$entry" 2>/dev/null || true
+        sed -i 's/^title Arrera.*/title Arrera Blue-dev 2026/g' "$entry" 2>/dev/null || true
+    done
+fi
+
+if command -v grubby >/dev/null 2>&1; then
+    grubby --update-kernel=ALL --remove-args="rd.live.image" 2>/dev/null || true
+    grubby --update-kernel=ALL --args="${SILENT_CMDLINE}" 2>/dev/null || true
+fi
+
+# Sauvegarder la ligne de commande par défaut pour les futures mises à jour de noyau (/etc/kernel/cmdline)
+ROOT_ARG=$(grep -o 'root=[^ ]*' /boot/loader/entries/*.conf 2>/dev/null | head -n 1 || true)
+if [ -n "$ROOT_ARG" ]; then
+    mkdir -p /etc/kernel
+    echo "${ROOT_ARG} ro ${SILENT_CMDLINE}" > /etc/kernel/cmdline
+fi
+
+# Configuration stricte de /etc/default/grub pour masquer totalement le menu
+mkdir -p /etc/default
+cat > /etc/default/grub << 'GRUB_EOF'
+GRUB_TIMEOUT=0
+GRUB_TIMEOUT_STYLE=hidden
+GRUB_RECORDFAIL_TIMEOUT=0
+GRUB_DISTRIBUTOR="Arrera Blue-dev 2026"
+GRUB_DEFAULT=0
+GRUB_DISABLE_SUBMENU=true
+GRUB_TERMINAL_OUTPUT="console"
+GRUB_CMDLINE_LINUX="rhgb quiet splash loglevel=3 rd.udev.log_priority=3 systemd.show_status=false vt.global_cursor_default=0"
+GRUB_DISABLE_RECOVERY=true
+GRUB_EOF
+
+# Marquer l'environnement GRUB comme démarré avec succès pour éviter que menu_auto_hide ne force l'affichage
+if command -v grub2-editenv >/dev/null 2>&1; then
+    for envfile in /boot/grub2/grubenv /boot/efi/EFI/fedora/grubenv; do
+        if [ -f "$envfile" ] || [ -d "$(dirname "$envfile")" ]; then
+            grub2-editenv "$envfile" set menu_auto_hide=1 2>/dev/null || true
+            grub2-editenv "$envfile" set boot_success=1 2>/dev/null || true
+            grub2-editenv "$envfile" set boot_indeterminate=0 2>/dev/null || true
+            grub2-editenv "$envfile" set saved_entry=0 2>/dev/null || true
+        fi
+    done
+fi
+
+# Génération UNIQUE de /boot/grub2/grub.cfg (emplacement canonique Fedora 34+)
+if command -v grub2-mkconfig >/dev/null 2>&1; then
+    echo "-> Génération de /boot/grub2/grub.cfg..."
+    grub2-mkconfig -o /boot/grub2/grub.cfg 2>/dev/null || true
+fi
+ln -sf ../boot/grub2/grub.cfg /etc/grub2.cfg 2>/dev/null || true
+ln -sf ../boot/grub2/grub.cfg /etc/grub2-efi.cfg 2>/dev/null || true
+
+# Configuration et sécurisation de l'amorçage UEFI (Multi-architecture x86_64 & aarch64)
+TARGET_ARCH=$(uname -m)
+case "$TARGET_ARCH" in
+    aarch64|arm64)
+        SHIM_BIN="shimaa64.efi"
+        GRUB_BIN="grubaa64.efi"
+        FALLBACK_BIN="BOOTAA64.EFI"
+        MM_BIN="mmaa64.efi"
+        FB_BIN="fbaa64.efi"
+        CSV_BIN="BOOTAA64.CSV"
+        ;;
+    x86_64|amd64|*)
+        SHIM_BIN="shimx64.efi"
+        GRUB_BIN="grubx64.efi"
+        FALLBACK_BIN="BOOTX64.EFI"
+        MM_BIN="mmx64.efi"
+        FB_BIN="fbx64.efi"
+        CSV_BIN="BOOTX64.CSV"
+        ;;
+esac
+
+if [ -d /sys/firmware/efi ] || [ -d /boot/efi ] || grep -q '/boot/efi' /etc/fstab 2>/dev/null; then
+    echo "-> Système UEFI détecté ($TARGET_ARCH) : finalisation de la partition ESP..."
+    
+    # S'assurer que /boot/efi est bien monté (crucial dans le chroot Calamares)
+    if ! mountpoint -q /boot/efi; then
+        # Tenter le montage depuis fstab (le module fstab de Calamares l'a déjà écrit)
+        if grep -q '/boot/efi' /etc/fstab 2>/dev/null; then
+            ESP_FSTAB_DEV=$(awk '$2 == "/boot/efi" {print $1}' /etc/fstab | head -n 1)
+            if [ -n "$ESP_FSTAB_DEV" ]; then
+                mkdir -p /boot/efi
+                mount "$ESP_FSTAB_DEV" /boot/efi 2>/dev/null || mount /boot/efi 2>/dev/null || true
+            fi
+        else
+            mount /boot/efi 2>/dev/null || true
+        fi
+    fi
+
+    mkdir -p /boot/efi/EFI/fedora
+    mkdir -p /boot/efi/EFI/BOOT
+
+    # Copie/restauration des binaires EFI officiels depuis la sauvegarde ou /usr
+    for src in /usr/share/arrera-efi/EFI/fedora \
+               /usr/lib/efi/shim/*/EFI/fedora \
+               /usr/lib/efi/grub2/*/EFI/fedora; do
+        if [ -d "$src" ]; then
+            cp -a "$src"/* /boot/efi/EFI/fedora/ 2>/dev/null || true
+        fi
+    done
+
+    # Recherche de secours si les binaires principaux sont absents
+    if [ ! -f "/boot/efi/EFI/fedora/$SHIM_BIN" ]; then
+        FOUND_SHIM=$(find /usr -name "$SHIM_BIN" 2>/dev/null | head -n 1 || true)
+        [ -n "$FOUND_SHIM" ] && cp -f "$FOUND_SHIM" "/boot/efi/EFI/fedora/$SHIM_BIN" 2>/dev/null || true
+    fi
+    if [ ! -f "/boot/efi/EFI/fedora/$GRUB_BIN" ]; then
+        FOUND_GRUB=$(find /usr -name "$GRUB_BIN" 2>/dev/null | head -n 1 || true)
+        [ -n "$FOUND_GRUB" ] && cp -f "$FOUND_GRUB" "/boot/efi/EFI/fedora/$GRUB_BIN" 2>/dev/null || true
+    fi
+
+    # Fallback ARM64 : si les binaires EFI sont toujours absents, forcer grub2-install
+    if [ "$TARGET_ARCH" = "aarch64" ] && [ ! -f "/boot/efi/EFI/fedora/$GRUB_BIN" ]; then
+        echo "-> ARM64 : binaires EFI absents, exécution de grub2-install en fallback..."
+        if command -v grub2-install >/dev/null 2>&1; then
+            grub2-install --target=arm64-efi --efi-directory=/boot/efi --bootloader-id=fedora --removable 2>/dev/null || true
+        fi
+    fi
+
+    # Création du chemin de secours amovible /EFI/BOOT/ (indispensable VM ARM64 & firmwares sans NVRAM)
+    if [ -f "/boot/efi/EFI/fedora/$SHIM_BIN" ]; then
+        cp -f "/boot/efi/EFI/fedora/$SHIM_BIN" "/boot/efi/EFI/BOOT/$FALLBACK_BIN" 2>/dev/null || true
+    elif [ -f "/usr/share/arrera-efi/EFI/BOOT/$FALLBACK_BIN" ]; then
+        cp -f "/usr/share/arrera-efi/EFI/BOOT/$FALLBACK_BIN" "/boot/efi/EFI/BOOT/$FALLBACK_BIN" 2>/dev/null || true
+    fi
+
+    if [ -f "/boot/efi/EFI/fedora/$GRUB_BIN" ]; then
+        cp -f "/boot/efi/EFI/fedora/$GRUB_BIN" "/boot/efi/EFI/BOOT/$GRUB_BIN" 2>/dev/null || true
+    fi
+
+    for f in "$MM_BIN" "$FB_BIN" "$CSV_BIN"; do
+        if [ -f "/boot/efi/EFI/fedora/$f" ]; then
+            cp -f "/boot/efi/EFI/fedora/$f" "/boot/efi/EFI/BOOT/$f" 2>/dev/null || true
+        fi
+    done
+
+    # Construction du STUB de redirection officiel Fedora dans /boot/efi/EFI/fedora/grub.cfg
+    # NE JAMAIS écraser ce fichier avec grub2-mkconfig !
+    # Utilisation en priorité de gen_grub_cfgstub officiel Fedora (identique Anaconda)
+    STUB_OK=0
+    if command -v gen_grub_cfgstub >/dev/null 2>&1; then
+        echo "-> Génération officielle du stub GRUB EFI via gen_grub_cfgstub (Anaconda)..."
+        if gen_grub_cfgstub /boot/grub2 /boot/efi/EFI/fedora 2>/dev/null; then
+            [ -s /boot/efi/EFI/fedora/grub.cfg ] && STUB_OK=1
+        fi
+    fi
+
+    if [ "$STUB_OK" -eq 0 ]; then
+        BOOT_UUID=""
+        GRUB_RELPATH="/boot/grub2"
+
+        if mountpoint -q /boot; then
+            BOOT_DEV=$(findmnt -n -o SOURCE /boot 2>/dev/null || df /boot 2>/dev/null | tail -1 | awk '{print $1}')
+            GRUB_RELPATH="/grub2"
+        else
+            BOOT_DEV=$(findmnt -n -o SOURCE / 2>/dev/null || df / 2>/dev/null | tail -1 | awk '{print $1}')
+            GRUB_RELPATH="/boot/grub2"
+        fi
+
+        if [ -n "$BOOT_DEV" ]; then
+            BOOT_UUID=$(blkid -s UUID -o value "$BOOT_DEV" 2>/dev/null || true)
+        fi
+
+        # Fallback 1 : grub2-probe
+        if [ -z "$BOOT_UUID" ] && command -v grub2-probe >/dev/null 2>&1; then
+            echo "-> AVERTISSEMENT : BOOT_UUID vide, tentative de récupération par grub2-probe..."
+            BOOT_UUID=$(grub2-probe --target=fs_uuid /boot 2>/dev/null || true)
+        fi
+
+        # Fallback 2 : lire l'UUID depuis /etc/fstab (fiable dans le chroot Calamares)
+        if [ -z "$BOOT_UUID" ] && [ -f /etc/fstab ]; then
+            echo "-> AVERTISSEMENT : BOOT_UUID toujours vide, lecture depuis /etc/fstab..."
+            # Chercher d'abord une partition /boot séparée, sinon la racine /
+            FSTAB_UUID=$(awk '$2 == "/boot" && $1 ~ /^UUID=/ {sub(/^UUID=/, "", $1); print $1}' /etc/fstab | head -n 1)
+            if [ -n "$FSTAB_UUID" ]; then
+                BOOT_UUID="$FSTAB_UUID"
+                GRUB_RELPATH="/grub2"
+            else
+                FSTAB_UUID=$(awk '$2 == "/" && $1 ~ /^UUID=/ {sub(/^UUID=/, "", $1); print $1}' /etc/fstab | head -n 1)
+                if [ -n "$FSTAB_UUID" ]; then
+                    BOOT_UUID="$FSTAB_UUID"
+                    GRUB_RELPATH="/boot/grub2"
+                fi
+            fi
+        fi
+
+        if [ -n "$BOOT_UUID" ]; then
+            echo "-> Écriture du stub GRUB EFI (UUID: ${BOOT_UUID}, chemin: ${GRUB_RELPATH})..."
+            cat > /boot/efi/EFI/fedora/grub.cfg << STUB_EOF
+search --no-floppy --fs-uuid --set=dev ${BOOT_UUID}
+set prefix=(\$dev)${GRUB_RELPATH}
+export \$prefix
+configfile \$prefix/grub.cfg
+STUB_EOF
+        else
+            echo "-> ERREUR CRITIQUE : Impossible de déterminer l'UUID de la partition boot !"
+            echo "-> Le stub EFI ne sera pas généré correctement."
+        fi
+    fi
+
+    # Le même stub est copié dans /boot/efi/EFI/BOOT/grub.cfg pour le démarrage fallback
+    cp -f /boot/efi/EFI/fedora/grub.cfg /boot/efi/EFI/BOOT/grub.cfg 2>/dev/null || true
+
+    # Enregistrement dans la NVRAM via efibootmgr
+    if [ -d /sys/firmware/efi ] && command -v efibootmgr >/dev/null 2>&1; then
+        ESP_DEV=$(findmnt -n -o SOURCE /boot/efi 2>/dev/null || true)
+        if [ -n "$ESP_DEV" ]; then
+            ESP_DISK=""
+            ESP_PART=""
+            if command -v lsblk >/dev/null 2>&1; then
+                PK=$(lsblk -no PKNAME "$ESP_DEV" 2>/dev/null || true)
+                [ -n "$PK" ] && ESP_DISK="/dev/$PK"
+                ESP_PART=$(lsblk -no PARTN "$ESP_DEV" 2>/dev/null || true)
+            fi
+            if [ -z "$ESP_DISK" ] || [ -z "$ESP_PART" ]; then
+                if [[ "$ESP_DEV" =~ ^(/dev/[a-zA-Z]+)([0-9]+)$ ]]; then
+                    ESP_DISK="${BASH_REMATCH[1]}"
+                    ESP_PART="${BASH_REMATCH[2]}"
+                elif [[ "$ESP_DEV" =~ ^(/dev/[a-zA-Z0-9]+)p([0-9]+)$ ]]; then
+                    ESP_DISK="${BASH_REMATCH[1]}"
+                    ESP_PART="${BASH_REMATCH[2]}"
+                fi
+            fi
+
+            if [ -n "$ESP_DISK" ] && [ -n "$ESP_PART" ]; then
+                echo "-> Nettoyage et enregistrement de l'entrée UEFI Arrera ($ESP_DISK partition $ESP_PART)..."
+                for bnum in $(efibootmgr 2>/dev/null | grep -iE "Arrera|fedora" | awk '{print $1}' | tr -d 'Boot*' | tr -d ':'); do
+                    efibootmgr -b "$bnum" -B 2>/dev/null || true
+                done
+                efibootmgr -c -d "$ESP_DISK" -p "$ESP_PART" -w -L "Arrera Blue 2026" -l "\\EFI\\fedora\\$SHIM_BIN" 2>/dev/null || true
+            fi
+        fi
+    fi
+    sync
+fi
+
+# 3. Configuration et régénération du thème Plymouth Arrera
+echo "[3/8] Application du thème de démarrage Plymouth Arrera..."
+mkdir -p /etc/dracut.conf.d
+cat > /etc/dracut.conf.d/plymouth.conf << 'DRACUT_EOF'
+add_dracutmodules+=" plymouth "
+DRACUT_EOF
+
+mkdir -p /etc/plymouth
+cat > /etc/plymouth/plymouthd.conf << 'PLYMOUTH_EOF'
+[Daemon]
+Theme=arrera
+ShowDelay=0
+DeviceTimeout=8
+PLYMOUTH_EOF
+
+if [ -d /usr/share/plymouth/themes/arrera ]; then
+    ln -sf /usr/share/plymouth/themes/arrera/arrera.plymouth /usr/share/plymouth/themes/default.plymouth 2>/dev/null || true
+fi
+
+if command -v plymouth-set-default-theme >/dev/null 2>&1; then
+    plymouth-set-default-theme arrera 2>/dev/null || true
+fi
+
+# Reconstruire explicitement l'initramfs pour TOUS les noyaux avec Plymouth et le thème Arrera
+if command -v dracut >/dev/null 2>&1; then
+    echo "-> Régénération complète de l'initramfs avec Dracut et le thème Arrera..."
+    dracut --regenerate-all --force --add plymouth 2>/dev/null || {
+        if [ -n "$LATEST_KERNEL" ]; then
+            KVER=$(basename "$LATEST_KERNEL" | sed 's/vmlinuz-//')
+            dracut -f --add plymouth "/boot/initramfs-${KVER}.img" "$KVER" 2>/dev/null || true
+        fi
+    }
+fi
+
+# 4. Forcer la cible graphique (GDM / GNOME)
+echo "[4/8] Configuration du démarrage graphique (GDM)..."
+systemctl set-default graphical.target 2>/dev/null || ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target
+systemctl enable gdm 2>/dev/null || ln -sf /usr/lib/systemd/system/gdm.service /etc/systemd/system/display-manager.service
+
+# 5. Désactiver et supprimer définitivement le mode kiosque
+echo "[5/8] Nettoyage des composants Kiosque Live..."
+systemctl disable arrera-kiosk.service 2>/dev/null || true
+rm -f /etc/systemd/system/arrera-kiosk.service
+rm -f /etc/systemd/system/multi-user.target.wants/arrera-kiosk.service
+rm -f /usr/bin/arrera-installer-kiosk.sh
+
+# 6. Supprimer tout autologin GDM résiduel
+echo "[6/8] Réinitialisation de la configuration de connexion GDM..."
+rm -f /etc/gdm/custom.conf
+
+# 7. Nettoyer le compte Live temporaire 'arrera' si un utilisateur a été créé
+echo "[7/8] Vérification des comptes utilisateurs..."
+OTHER_USER=$(awk -F: '$3 >= 1000 && $1 != "arrera" && $1 != "nobody" {print $1}' /etc/passwd | head -n 1)
+if [ -n "$OTHER_USER" ]; then
+    echo "-> Utilisateur principal installé détecté : $OTHER_USER"
+    echo "-> Suppression du compte temporaire live 'arrera'..."
+    pkill -9 -u arrera 2>/dev/null || true
+    userdel -r -f arrera 2>/dev/null || true
+    rm -rf /home/arrera
+    rm -f /etc/sudoers.d/arrera
+fi
+
+# 8. Nettoyage des raccourcis et mise à jour des caches d'environnement
+echo "[8/8] Application des réglages d'environnement Arrera..."
+rm -f /home/*/Bureau/install-*.desktop /home/*/Desktop/install-*.desktop 2>/dev/null || true
+rm -f /home/*/.config/autostart/install-*.desktop 2>/dev/null || true
+rm -f /etc/xdg/autostart/install-*.desktop 2>/dev/null || true
+rm -f /usr/share/applications/calamares*.desktop 2>/dev/null || true
+
+if command -v dconf >/dev/null 2>&1; then
+    dconf update 2>/dev/null || true
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
+fi
+
+# Auto-nettoyage du script
+rm -f /usr/bin/arrera-postinstall.sh 2>/dev/null || true
+
+echo "=========================================================="
+echo "   Système Arrera installé avec succès et prêt !"
+echo "=========================================================="
+sync
+exit 0
+POSTINSTALL_EOF
+
+chmod +x /usr/bin/arrera-postinstall.sh
+
+# 2. Écriture de la configuration du module shellprocess Calamares (sans variable bash inline)
+mkdir -p /etc/calamares/modules
+cat > /etc/calamares/modules/shellprocess-postinstall.conf << 'CALAMARES_POSTINSTALL_CONF'
+# Configuration du module shellprocess-postinstall pour Arrera Linux
+# Finalise le système installé en chroot (graphical.target, GDM, nettoyage)
+---
+dontChroot: false
+timeout: 600
+
+script:
+    - command: "/usr/bin/arrera-postinstall.sh"
+      timeout: 600
+CALAMARES_POSTINSTALL_CONF
+
+# Écriture de bootloader.conf Calamares (timeout 0 pour masquer GRUB, splash pour Plymouth)
+cat > /etc/calamares/modules/bootloader.conf << 'CALAMARES_BOOTLOADER_CONF'
+# Configuration du module bootloader pour Arrera Linux
+---
+efiBootLoader: "sb-shim"
+kernelSearchPath: "/usr/lib/modules"
+kernelPattern: "^vmlinuz.*"
+loaderEntries:
+  - "timeout 0"
+  - "console-mode keep"
+kernelParams: [ "rhgb", "quiet", "splash", "loglevel=3", "rd.udev.log_priority=3", "systemd.show_status=false", "vt.global_cursor_default=0" ]
+grubInstall: "grub2-install"
+grubMkconfig: "grub2-mkconfig"
+grubCfg: "/boot/grub2/grub.cfg"
+grubProbe: "grub2-probe"
+efiBootMgr: "efibootmgr"
+efiBootloaderId: "fedora"
+installEFIFallback: true
+CALAMARES_BOOTLOADER_CONF
+
+# 3. Écriture de settings.conf pour Calamares (inclut shellprocess@postinstall dans exec:)
+cat > /etc/calamares/settings.conf << 'CALAMARES_SETTINGS_CONF'
+# Configuration file for Calamares - Arrera Linux
+# Pipeline optimisé pour Fedora (x86_64 et aarch64)
+---
+modules-search:
+  - local
+  - /usr/lib64/calamares/modules
+  - /usr/lib/calamares/modules
+  - /usr/share/calamares/modules
+
+instances:
+  - id:       installmode
+    module:   packagechooser
+    config:   packagechooser-installmode.conf
+  - id:       postinstall
+    module:   shellprocess
+    config:   shellprocess-postinstall.conf
+
+sequence:
+  - show:
+      - welcome
+      - locale
+      - keyboard
+      - partition
+      - users
+      - packagechooser@installmode
+      - summary
+  - exec:
+      - partition
+      - mount
+      - unpackfs
+      - machineid
+      - fstab
+      - locale
+      - keyboard
+      - localecfg
+      - users
+      - networkcfg
+      - hwclock
+      - services-systemd
+      - bootloader
+      - shellprocess@postinstall
+      - umount
+  - show:
+      - finished
+
+branding: arrera
+
+prompt-install: true
+
+dont-chroot: false
+
+oem-setup: false
+
+disable-cancel: false
+
+disable-cancel-during-exec: true
+
+hide-back-and-next-during-exec: true
+
+quit-at-end: false
+CALAMARES_SETTINGS_CONF
+
+# 4. Service de secours au premier démarrage sur disque dur (Condition: pas en mode Live)
+cat > /etc/systemd/system/arrera-postinstall-fallback.service << 'FALLBACK_SERVICE_EOF'
 [Unit]
-Description=Arrera Linux - Mise à jour complète du système au premier démarrage
-Documentation=https://github.com/Arrera-Software
+Description=Arrera Linux First Boot Finalizer
+DefaultDependencies=no
+After=local-fs.target
+Before=gdm.service display-manager.service
 ConditionKernelCommandLine=!rd.live.image
-ConditionPathExists=!/var/lib/arrera/.firstboot-update-done
-After=network-online.target
-Wants=network-online.target
+ConditionPathExists=!/run/initramfs/live
 
 [Service]
 Type=oneshot
-ExecStart=/usr/lib/arrera/arrera-firstboot-update.sh
-ExecStartPost=/bin/bash -c 'mkdir -p /var/lib/arrera && touch /var/lib/arrera/.firstboot-update-done'
 RemainAfterExit=yes
-StandardOutput=journal
-StandardError=journal
+ExecStart=/bin/bash -c "systemctl set-default graphical.target 2>/dev/null || ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target; systemctl enable gdm 2>/dev/null || true; systemctl disable arrera-kiosk.service 2>/dev/null || true; rm -f /etc/gdm/custom.conf; systemctl disable arrera-postinstall-fallback.service 2>/dev/null || true; rm -f /etc/systemd/system/arrera-postinstall-fallback.service"
 
 [Install]
-WantedBy=multi-user.target
-UPDATE_SERVICE_EOF
+WantedBy=multi-user.target graphical.target
+FALLBACK_SERVICE_EOF
 
-systemctl enable arrera-firstboot-update.service
-
-# Auto-login GDM pour la session Live (pas de mot de passe demandé)
-mkdir -p /etc/gdm
-cat > /etc/gdm/custom.conf <<'GDM_EOF'
-[daemon]
-AutomaticLoginEnable=True
-AutomaticLogin=arrera
-
-[security]
-
-[xdmcp]
-
-[chooser]
-
-[debug]
-GDM_EOF
-
-# Raccourci "Installer Arrera Blue-dev 2026" sur le bureau
-mkdir -p /home/arrera/Bureau
-cat > /home/arrera/Bureau/install-arrera.desktop <<'DESKTOP_EOF'
-[Desktop Entry]
-Name=Installer Arrera Blue-dev 2026
-Name[en]=Install Arrera Blue-dev 2026
-Comment=Installer Arrera Blue-dev 2026 sur le disque dur
-Exec=/usr/bin/liveinst
-Icon=anaconda
-Terminal=false
-Type=Application
-Categories=System;GTK;
-StartupNotify=true
-X-GNOME-Autostart-enabled=true
-DESKTOP_EOF
-chmod +x /home/arrera/Bureau/install-arrera.desktop
-chown -R arrera:arrera /home/arrera/Bureau
-
-# Aussi dans /usr/share/applications pour le menu
-cp /home/arrera/Bureau/install-arrera.desktop /usr/share/applications/install-arrera.desktop
-
-# Lancement AUTOMATIQUE d'Anaconda au démarrage de la session Live
-mkdir -p /etc/xdg/autostart
-cp /home/arrera/Bureau/install-arrera.desktop /etc/xdg/autostart/install-arrera.desktop
-
-mkdir -p /home/arrera/.config/autostart
-cp /home/arrera/Bureau/install-arrera.desktop /home/arrera/.config/autostart/install-arrera.desktop
-
-# Marquer le .desktop comme fiable (GNOME 44+)
-mkdir -p /home/arrera/.local/share
-chown -R arrera:arrera /home/arrera/.local /home/arrera/.config
-
-# Libération des verrous et arrêt des démons d'arrière-plan résiduels
-gpgconf --kill all 2>/dev/null || true
-pkill -9 -f gpg-agent 2>/dev/null || true
-pkill -9 -f dbus-daemon 2>/dev/null || true
-sync
+systemctl enable arrera-postinstall-fallback.service 2>/dev/null || true
 
 echo "=========================================="
 echo " FIN DE LA CONFIGURATION ARRERA LINUX    "
