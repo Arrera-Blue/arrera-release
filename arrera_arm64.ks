@@ -167,11 +167,12 @@ google-noto-sans-fonts
 google-noto-sans-mono-fonts
 dejavu-sans-fonts
 
-# === Installateur (pour "Installer sur le disque dur") ===
+# === Installateur officiel Fedora (Anaconda WebUI) ===
 anaconda
+anaconda-webui
 anaconda-install-env-deps
 anaconda-live
-liveinst
+firefox
 
 %end
 
@@ -216,8 +217,11 @@ enabled_metadata=1
 cost=100
 COPR_REPO_EOF
 
-# Importer la clé publique GPG officielle du Copr Arrera
-rpm --import https://download.copr.fedorainfracloud.org/results/arrera-software/arrera-blue/pubkey.gpg 2>/dev/null || true
+# Importer la clé publique GPG officielle du Copr Arrera (avec timeout sécurisé)
+curl --silent --max-time 10 --retry 2 \
+    https://download.copr.fedorainfracloud.org/results/arrera-software/arrera-blue/pubkey.gpg \
+    -o /tmp/arrera-copr.gpg 2>/dev/null && rpm --import /tmp/arrera-copr.gpg 2>/dev/null || true
+rm -f /tmp/arrera-copr.gpg
 
 # ================================================================
 # Configuration de la session Live (auto-login + installateur)
@@ -248,10 +252,41 @@ polkit.addRule(function(action, subject) {
 POLKIT_ANACONDA_EOF
 
 # ================================================================
-# Applications Flatpak (Saveurs bureau : Home / School)
+# Service de mise à jour système & Flatpaks au premier démarrage
+# (Ne s'exécute JAMAIS sur le Live, uniquement sur le système installé connecté)
 # ================================================================
+
+# Pré-enregistrer le dépôt Flathub
 if command -v flatpak &>/dev/null; then
-    echo "Configuration de Flathub et installation des Flatpaks..."
+    flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+fi
+
+mkdir -p /usr/lib/arrera
+cat > /usr/lib/arrera/arrera-firstboot-update.sh << 'UPDATE_SCRIPT_EOF'
+#!/bin/bash
+set -u
+LOG="/var/log/arrera-firstboot-update.log"
+exec >> "$LOG" 2>&1
+echo "=== Démarrage mise à jour système Arrera : $(date) ==="
+
+# Attendre que le réseau soit opérationnel (max 120s)
+for i in $(seq 1 24); do
+    if curl --silent --max-time 5 https://fedoraproject.org > /dev/null 2>&1 || \
+       curl --silent --max-time 5 https://google.com > /dev/null 2>&1; then
+        echo "Réseau confirmé disponible."
+        break
+    fi
+    echo "En attente d'une connexion réseau ($i/24)..."
+    sleep 5
+done
+
+# 1. Mise à jour complète de tous les paquets du système (DNF)
+echo "-> Mise à jour de tous les paquets système..."
+dnf upgrade -y --refresh || true
+
+# 2. Installation des applications Flatpak
+if command -v flatpak &>/dev/null; then
+    echo "-> Installation des Flatpaks officiels..."
     flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
     flatpak install -y --noninteractive flathub \
         it.mijorus.gearlever \
@@ -259,6 +294,35 @@ if command -v flatpak &>/dev/null; then
         io.github.flattool.Warehouse \
         com.github.tchx84.Flatseal 2>/dev/null || true
 fi
+
+echo "=== Système Arrera 100% à jour : $(date) ==="
+systemctl disable arrera-firstboot-update.service || true
+UPDATE_SCRIPT_EOF
+
+chmod +x /usr/lib/arrera/arrera-firstboot-update.sh
+
+cat > /etc/systemd/system/arrera-firstboot-update.service << 'UPDATE_SERVICE_EOF'
+[Unit]
+Description=Arrera Linux - Mise à jour complète du système au premier démarrage
+Documentation=https://github.com/Arrera-Software
+ConditionKernelCommandLine=!rd.live.image
+ConditionPathExists=!/var/lib/arrera/.firstboot-update-done
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/arrera/arrera-firstboot-update.sh
+ExecStartPost=/bin/bash -c 'mkdir -p /var/lib/arrera && touch /var/lib/arrera/.firstboot-update-done'
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+UPDATE_SERVICE_EOF
+
+systemctl enable arrera-firstboot-update.service
 
 # Auto-login GDM pour la session Live (pas de mot de passe demandé)
 mkdir -p /etc/gdm
@@ -307,6 +371,12 @@ cp /home/arrera/Bureau/install-arrera.desktop /home/arrera/.config/autostart/ins
 # Marquer le .desktop comme fiable (GNOME 44+)
 mkdir -p /home/arrera/.local/share
 chown -R arrera:arrera /home/arrera/.local /home/arrera/.config
+
+# Libération des verrous et arrêt des démons d'arrière-plan résiduels
+gpgconf --kill all 2>/dev/null || true
+pkill -9 -f gpg-agent 2>/dev/null || true
+pkill -9 -f dbus-daemon 2>/dev/null || true
+sync
 
 echo "=========================================="
 echo " FIN DE LA CONFIGURATION ARRERA LINUX    "
