@@ -2,9 +2,8 @@
 # Arrera Linux - Kickstart ARM64 (aarch64)
 # ==============================================================================
 # IMPORTANT : Ce fichier est le Kickstart officiel ARM64 pour Arrera Linux.
-# Il démarre l'installateur natif Anaconda GTK directement en plein écran (via Cage)
-# sur le média Live, sans charger de bureau GNOME intermédiaire.
-# Une fois installé sur le disque dur, le système démarre sous GNOME standard.
+# Lance directement Anaconda GTK en mode Kiosque plein écran (Cage) sans GNOME
+# au démarrage du média Live, identique au comportement x86_64.
 # ==============================================================================
 
 # --------------------------------------------------------------------------
@@ -21,7 +20,7 @@ timezone Europe/Paris --utc
 network --bootproto=dhcp --device=link --activate
 network --hostname=arrera
 
-# Compte utilisateur Live
+# Compte utilisateur
 rootpw --lock
 user --name=arrera --groups=wheel --plaintext --password=arrera
 selinux --permissive
@@ -43,7 +42,7 @@ part / --size=10240 --fstype=ext4
 # Services
 # --------------------------------------------------------------------------
 
-services --enabled=NetworkManager,gdm,firewalld
+services --enabled=NetworkManager,firewalld,arrera-kiosk --disabled=gdm
 
 # --------------------------------------------------------------------------
 # Paquets
@@ -193,13 +192,30 @@ echo "=========================================="
 echo "arrera ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/arrera
 chmod 0440 /etc/sudoers.d/arrera
 
-# Activation des services standards (utilisés sur le système installé)
+# Activation des services pour le média Live (Kiosque Anaconda direct sans GNOME)
 systemctl enable NetworkManager
-systemctl enable gdm
 systemctl enable firewalld
+systemctl enable arrera-kiosk.service
+systemctl disable gdm || true
 
-# Forcer le démarrage en mode graphique par défaut
-systemctl set-default graphical.target
+# Cible par défaut pour le Kiosque (identique x86)
+systemctl set-default multi-user.target
+
+# Configuration Plymouth par défaut (thème Arrera)
+mkdir -p /etc/dracut.conf.d
+cat > /etc/dracut.conf.d/plymouth.conf << 'DRACUT_LIVE_EOF'
+add_dracutmodules+=" plymouth "
+DRACUT_LIVE_EOF
+
+mkdir -p /etc/plymouth
+cat > /etc/plymouth/plymouthd.conf << 'PLYMOUTH_LIVE_EOF'
+[Daemon]
+Theme=arrera
+ShowDelay=0
+DeviceTimeout=8
+PLYMOUTH_LIVE_EOF
+
+ln -sf /usr/share/plymouth/themes/arrera/arrera.plymouth /usr/share/plymouth/themes/default.plymouth 2>/dev/null || true
 
 # ================================================================
 # Configuration du dépôt Copr Arrera avec clé GPG officielle
@@ -220,25 +236,47 @@ cost=100
 COPR_REPO_EOF
 
 # Importer la clé publique GPG officielle du Copr Arrera
-# Timeout court car le réseau n'est pas garanti dans le chroot livemedia-creator
 curl --silent --max-time 10 --retry 2 \
     https://download.copr.fedorainfracloud.org/results/arrera-software/arrera-blue/pubkey.gpg \
     -o /tmp/arrera-copr.gpg 2>/dev/null && rpm --import /tmp/arrera-copr.gpg 2>/dev/null || true
 rm -f /tmp/arrera-copr.gpg
 
 # ================================================================
-# Applications Flatpak — Installation au premier démarrage
+# Configuration de la session Live (Règles Polkit pour Anaconda)
 # ================================================================
-# Le %post tourne sans réseau réel (chroot livemedia-creator).
-# On crée un service one-shot qui s'exécute UNE SEULE FOIS au premier boot
-# une fois le réseau disponible, puis se désactive automatiquement.
+mkdir -p /etc/polkit-1/rules.d/
 
-# Pré-enregistrer Flathub (fichier statique, pas besoin de réseau)
+cat > /etc/polkit-1/rules.d/49-liveuser.rules <<'POLKIT_LIVE_EOF'
+polkit.addAdminRule(function(action, subject) {
+    return ["unix-group:wheel"];
+});
+polkit.addRule(function(action, subject) {
+    if (subject.isInGroup("wheel")) {
+        return polkit.Result.YES;
+    }
+});
+POLKIT_LIVE_EOF
+
+cat > /etc/polkit-1/rules.d/50-anaconda.rules <<'POLKIT_ANACONDA_EOF'
+polkit.addRule(function(action, subject) {
+    if (action.id.indexOf("org.fedoraproject.anaconda") === 0 ||
+        action.id.indexOf("org.freedesktop.policykit.exec") === 0 ||
+        action.id.indexOf("org.freedesktop.udisks2") === 0) {
+        return polkit.Result.YES;
+    }
+});
+POLKIT_ANACONDA_EOF
+
+# S'assurer qu'aucun autologin GDM résiduel n'est configuré
+rm -f /etc/gdm/custom.conf
+
+# ================================================================
+# Applications Flatpak — Installation au premier démarrage sur disque dur
+# ================================================================
 if command -v flatpak &>/dev/null; then
     flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
 fi
 
-# Script d'installation first-boot
 cat > /usr/lib/arrera/arrera-flatpak-firstboot.sh << 'FLATPAK_SCRIPT_EOF'
 #!/bin/bash
 set -euo pipefail
@@ -246,7 +284,6 @@ LOG="/var/log/arrera-flatpak-firstboot.log"
 exec >> "$LOG" 2>&1
 echo "=== Arrera Flatpak First-Boot : $(date) ==="
 
-# Attendre que Flathub soit joignable (max 120s)
 for i in $(seq 1 24); do
     if curl --silent --max-time 5 https://dl.flathub.org > /dev/null 2>&1; then
         echo "Réseau OK."
@@ -256,10 +293,7 @@ for i in $(seq 1 24); do
     sleep 5
 done
 
-# S'assurer que le remote Flathub est enregistré
 flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
-
-# Installer les applications Flatpak
 flatpak install -y --noninteractive flathub \
     it.mijorus.gearlever \
     io.missioncenter.MissionCenter \
@@ -267,20 +301,18 @@ flatpak install -y --noninteractive flathub \
     com.github.tchx84.Flatseal || true
 
 echo "=== Installation Flatpak terminée : $(date) ==="
-
-# Se désactiver après la première exécution réussie
-systemctl disable arrera-flatpak-firstboot.service
+systemctl disable arrera-flatpak-firstboot.service || true
 FLATPAK_SCRIPT_EOF
 
 chmod +x /usr/lib/arrera/arrera-flatpak-firstboot.sh
 
-# Service systemd one-shot (s'exécute une seule fois au premier boot)
 cat > /etc/systemd/system/arrera-flatpak-firstboot.service << 'FLATPAK_SERVICE_EOF'
 [Unit]
 Description=Arrera Linux - Installation Flatpaks au premier démarrage
 Documentation=https://github.com/Arrera-Software
 After=network-online.target flatpak-system-helper.service
 Wants=network-online.target
+ConditionKernelCommandLine=!rd.live.image
 ConditionPathExists=!/var/lib/arrera/.flatpak-firstboot-done
 
 [Service]
@@ -299,23 +331,23 @@ mkdir -p /usr/lib/arrera /var/lib/arrera
 systemctl enable arrera-flatpak-firstboot.service
 
 # ================================================================
-# Lancement direct d'Anaconda GTK sur le Live (sans session GNOME)
+# Session Kiosque Anaconda GTK (Lancement direct sans bureau GNOME)
 # ================================================================
 
-# 1. Script lanceur pour Cage + Anaconda
-cat > /usr/bin/arrera-anaconda-launcher.sh << 'LAUNCHER_EOF'
+# Script de lancement Kiosque pour Anaconda
+cat > /usr/bin/arrera-installer-kiosk.sh << 'KIOSK_SCRIPT_EOF'
 #!/bin/bash
 set -e
 
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/0}"
 mkdir -p "$XDG_RUNTIME_DIR"
 chmod 0700 "$XDG_RUNTIME_DIR"
-
 export XDG_SESSION_TYPE="wayland"
-export GDK_BACKEND="wayland"
+export GDK_BACKEND="wayland,x11"
 export XDG_CURRENT_DESKTOP="GNOME"
+export DESKTOP_SESSION="gnome"
+export GTK_THEME="Adwaita"
 
-# Configuration de la disposition clavier pour Cage
 KEYMAP="$(localectl status 2>/dev/null | awk -F': ' '/X11 Layout/ {print $2}' | tr -d ' ' || true)"
 if [ -z "$KEYMAP" ]; then
     KEYMAP="$(awk -F'=' '/KEYMAP/ {gsub(/["'\'' ]/, "", $2); print $2}' /etc/vconsole.conf 2>/dev/null || true)"
@@ -323,49 +355,70 @@ fi
 export XKB_DEFAULT_LAYOUT="${KEYMAP:-fr}"
 export XKB_DEFAULT_MODEL="pc105"
 
-# Quitter Plymouth pour laisser place à l'interface graphique
+clear >/dev/tty1 2>/dev/null || true
+setterm -cursor off >/dev/tty1 2>/dev/null || true
 plymouth quit 2>/dev/null || true
 
-# Lancement en plein écran d'Anaconda GTK via le compositeur Wayland Cage
+on_exit_prompt() {
+    exec 1>/dev/tty1 2>&1
+    setterm -cursor on >/dev/tty1 2>/dev/null || true
+    clear >/dev/tty1 2>/dev/null || true
+
+    echo ""
+    echo "=========================================================="
+    echo "   Session d'installation Arrera Linux terminée"
+    echo "=========================================================="
+    echo "Que souhaitez-vous faire ?"
+    echo "  1) Redémarrer l'ordinateur (reboot)"
+    echo "  2) Éteindre l'ordinateur (poweroff)"
+    echo "  3) Ouvrir une invite de commande (bash)"
+    echo "  4) Relancer l'installateur"
+    echo "=========================================================="
+    read -r -p "Votre choix [1-4] (défaut: 1 dans 15s): " -t 15 CHOICE || CHOICE=1
+    case "$CHOICE" in
+        2)
+            echo "Extinction du système..."
+            systemctl poweroff || poweroff -f
+            ;;
+        3)
+            echo "Ouverture du shell de secours..."
+            exec /bin/bash
+            ;;
+        4)
+            exec "$0"
+            ;;
+        1|*)
+            echo "Redémarrage du système..."
+            systemctl reboot || reboot -f
+            ;;
+    esac
+}
+
+# Lancer Anaconda via Cage
 if command -v cage >/dev/null 2>&1; then
     cage -s -- /usr/bin/liveinst || true
 else
     /usr/bin/liveinst || true
 fi
 
-# Gestion propre de la fin d'installation sur le TTY1
-exec 1>/dev/tty1 2>&1
-clear >/dev/tty1 2>/dev/null || true
-echo "=========================================================="
-echo "      Arrera Linux - Installation terminée ou quittée     "
-echo "=========================================================="
-echo "Redémarrage automatique du système dans 5 secondes..."
-echo "(Appuyez sur 's' pour ouvrir un shell de secours)"
-read -r -t 5 -n 1 CHOICE || CHOICE="r"
-if [ "$CHOICE" = "s" ] || [ "$CHOICE" = "S" ]; then
-    echo "Ouverture du shell root..."
-    exec /bin/bash
-else
-    echo "Redémarrage en cours..."
-    systemctl reboot || reboot -f
-fi
-LAUNCHER_EOF
+on_exit_prompt
+exit 0
+KIOSK_SCRIPT_EOF
 
-chmod +x /usr/bin/arrera-anaconda-launcher.sh
+chmod +x /usr/bin/arrera-installer-kiosk.sh
 
-# 2. Service systemd dédié au Live (ignoré sur le système installé grâce à ConditionKernelCommandLine)
-cat > /etc/systemd/system/arrera-anaconda-live.service << 'SERVICE_EOF'
+# Service systemd pour le Kiosque (identique à arrera-kiosk.service x86)
+cat > /etc/systemd/system/arrera-kiosk.service << 'KIOSK_SERVICE_EOF'
 [Unit]
-Description=Arrera Linux Anaconda Direct Installer
+Description=Arrera Linux Anaconda Installer Kiosk Session
 Documentation=https://github.com/Arrera-Software
-ConditionKernelCommandLine=rd.live.image
-After=systemd-user-sessions.service NetworkManager.service
-Conflicts=gdm.service
+After=systemd-user-sessions.service systemd-udev-settle.service
+Conflicts=getty@tty1.service gdm.service lightdm.service sddm.service
 Before=getty@tty1.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/arrera-anaconda-launcher.sh
+ExecStart=/usr/bin/arrera-installer-kiosk.sh
 StandardInput=tty
 StandardOutput=journal
 StandardError=journal
@@ -373,20 +426,48 @@ TTYPath=/dev/tty1
 TTYReset=yes
 TTYVHangup=yes
 TTYVTDisallocate=yes
+PAMName=login
+User=root
+WorkingDirectory=/root
 Environment=XDG_RUNTIME_DIR=/run/user/0
 Environment=XDG_SESSION_TYPE=wayland
-Environment=GDK_BACKEND=wayland
-User=root
-Restart=no
+Environment=GDK_BACKEND=wayland,x11
+Environment=XKB_DEFAULT_LAYOUT=fr
+Environment=XKB_DEFAULT_MODEL=pc105
+Restart=on-failure
+RestartSec=2s
 
 [Install]
-WantedBy=graphical.target
-SERVICE_EOF
+WantedBy=multi-user.target
+KIOSK_SERVICE_EOF
 
-systemctl enable arrera-anaconda-live.service
+systemctl enable arrera-kiosk.service
 
-# Libération des verrous et arrêt des démons d'arrière-plan résiduels
-# (Évite l'erreur EBUSY / umount of /tmp failed 32 lors du démontage Anaconda)
+# ================================================================
+# Service de secours au premier démarrage sur disque dur (Condition: pas en mode Live)
+# Permet de réactiver GDM et le bureau GNOME sur le système installé
+# ================================================================
+cat > /etc/systemd/system/arrera-postinstall-fallback.service << 'FALLBACK_SERVICE_EOF'
+[Unit]
+Description=Arrera Linux First Boot Finalizer
+DefaultDependencies=no
+After=local-fs.target
+Before=gdm.service display-manager.service
+ConditionKernelCommandLine=!rd.live.image
+ConditionPathExists=!/run/initramfs/live
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c "systemctl set-default graphical.target 2>/dev/null || ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target; systemctl enable gdm 2>/dev/null || true; systemctl disable arrera-kiosk.service 2>/dev/null || true; rm -f /etc/gdm/custom.conf; systemctl disable arrera-postinstall-fallback.service 2>/dev/null || true; rm -f /etc/systemd/system/arrera-postinstall-fallback.service"
+
+[Install]
+WantedBy=multi-user.target graphical.target
+FALLBACK_SERVICE_EOF
+
+systemctl enable arrera-postinstall-fallback.service 2>/dev/null || true
+
+# Nettoyage processus pour libérer /tmp
 gpgconf --kill all 2>/dev/null || true
 pkill -9 -f gpg-agent 2>/dev/null || true
 pkill -9 -f dbus-daemon 2>/dev/null || true
