@@ -168,11 +168,13 @@ google-noto-sans-fonts
 google-noto-sans-mono-fonts
 dejavu-sans-fonts
 
-# === Installateur officiel Fedora (Anaconda) & Kiosque autonome ===
+# === Installateur officiel Fedora (Anaconda GTK) & Kiosque autonome ===
 anaconda
+anaconda-gui
+anaconda-widgets
 anaconda-install-env-deps
 anaconda-live
-liveinst
+blivet-gui-runtime
 cage
 
 %end
@@ -338,14 +340,21 @@ cat > /usr/bin/arrera-installer-kiosk.sh << 'KIOSK_SCRIPT_EOF'
 #!/bin/bash
 set -e
 
+# Environnement Wayland & Cage
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/0}"
 mkdir -p "$XDG_RUNTIME_DIR"
 chmod 0700 "$XDG_RUNTIME_DIR"
+
 export XDG_SESSION_TYPE="wayland"
 export GDK_BACKEND="wayland,x11"
 export XDG_CURRENT_DESKTOP="GNOME"
 export DESKTOP_SESSION="gnome"
 export GTK_THEME="Adwaita"
+
+# Tolérance pour les environnements virtualisés (QEMU / UTM / virtio-gpu)
+export WLR_LIBINPUT_NO_DEVICES=1
+export WLR_NO_HARDWARE_CURSORS=1
+export WLR_RENDERER_ALLOW_SOFTWARE=1
 
 KEYMAP="$(localectl status 2>/dev/null | awk -F': ' '/X11 Layout/ {print $2}' | tr -d ' ' || true)"
 if [ -z "$KEYMAP" ]; then
@@ -393,11 +402,11 @@ on_exit_prompt() {
     esac
 }
 
-# Lancer Anaconda via Cage
+# Lancer Anaconda GTK en plein écran via Cage
 if command -v cage >/dev/null 2>&1; then
-    cage -s -- /usr/bin/liveinst || true
+    cage -s -- anaconda --liveinst --graphical || /usr/bin/liveinst || true
 else
-    /usr/bin/liveinst || true
+    anaconda --liveinst --graphical || /usr/bin/liveinst || true
 fi
 
 on_exit_prompt
@@ -406,12 +415,12 @@ KIOSK_SCRIPT_EOF
 
 chmod +x /usr/bin/arrera-installer-kiosk.sh
 
-# Service systemd pour le Kiosque (identique à arrera-kiosk.service x86)
+# Service systemd pour le Kiosque
 cat > /etc/systemd/system/arrera-kiosk.service << 'KIOSK_SERVICE_EOF'
 [Unit]
 Description=Arrera Linux Anaconda Installer Kiosk Session
 Documentation=https://github.com/Arrera-Software
-After=systemd-user-sessions.service systemd-udev-settle.service
+After=systemd-user-sessions.service NetworkManager.service
 Conflicts=getty@tty1.service gdm.service lightdm.service sddm.service
 Before=getty@tty1.service
 
@@ -419,13 +428,12 @@ Before=getty@tty1.service
 Type=simple
 ExecStart=/usr/bin/arrera-installer-kiosk.sh
 StandardInput=tty
-StandardOutput=journal
-StandardError=journal
+StandardOutput=journal+console
+StandardError=journal+console
 TTYPath=/dev/tty1
 TTYReset=yes
 TTYVHangup=yes
 TTYVTDisallocate=yes
-PAMName=login
 User=root
 WorkingDirectory=/root
 Environment=XDG_RUNTIME_DIR=/run/user/0
@@ -433,38 +441,22 @@ Environment=XDG_SESSION_TYPE=wayland
 Environment=GDK_BACKEND=wayland,x11
 Environment=XKB_DEFAULT_LAYOUT=fr
 Environment=XKB_DEFAULT_MODEL=pc105
-Restart=on-failure
-RestartSec=2s
-
-[Install]
-WantedBy=multi-user.target
-KIOSK_SERVICE_EOF
-
-systemctl enable arrera-kiosk.service
-
-# ================================================================
-# Service de secours au premier démarrage sur disque dur (Condition: pas en mode Live)
-# Permet de réactiver GDM et le bureau GNOME sur le système installé
-# ================================================================
-cat > /etc/systemd/system/arrera-postinstall-fallback.service << 'FALLBACK_SERVICE_EOF'
-[Unit]
-Description=Arrera Linux First Boot Finalizer
-DefaultDependencies=no
-After=local-fs.target
-Before=gdm.service display-manager.service
-ConditionKernelCommandLine=!rd.live.image
-ConditionPathExists=!/run/initramfs/live
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/bin/bash -c "systemctl set-default graphical.target 2>/dev/null || ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target; systemctl enable gdm 2>/dev/null || true; systemctl disable arrera-kiosk.service 2>/dev/null || true; rm -f /etc/gdm/custom.conf; systemctl disable arrera-postinstall-fallback.service 2>/dev/null || true; rm -f /etc/systemd/system/arrera-postinstall-fallback.service"
+Environment=WLR_LIBINPUT_NO_DEVICES=1
+Environment=WLR_NO_HARDWARE_CURSORS=1
+Restart=always
+RestartSec=1s
 
 [Install]
 WantedBy=multi-user.target graphical.target
-FALLBACK_SERVICE_EOF
+KIOSK_SERVICE_EOF
 
-systemctl enable arrera-postinstall-fallback.service 2>/dev/null || true
+# Activation et liaisons fermes dans les cibles de démarrage
+mkdir -p /etc/systemd/system/multi-user.target.wants /etc/systemd/system/graphical.target.wants
+ln -sf /etc/systemd/system/arrera-kiosk.service /etc/systemd/system/multi-user.target.wants/arrera-kiosk.service
+ln -sf /etc/systemd/system/arrera-kiosk.service /etc/systemd/system/graphical.target.wants/arrera-kiosk.service
+
+# Désactiver et masquer getty@tty1 pour empêcher le prompt textuel de voler le tty1
+systemctl mask getty@tty1.service 2>/dev/null || true
 
 # Nettoyage processus pour libérer /tmp
 gpgconf --kill all 2>/dev/null || true
