@@ -42,7 +42,7 @@ part / --size=10240 --fstype=ext4
 # Services
 # --------------------------------------------------------------------------
 
-services --enabled=NetworkManager,firewalld,arrera-kiosk --disabled=gdm
+services --enabled=NetworkManager,firewalld --disabled=gdm
 
 # --------------------------------------------------------------------------
 # Paquets
@@ -195,7 +195,6 @@ chmod 0440 /etc/sudoers.d/arrera
 # Activation des services pour le média Live (Kiosque Anaconda direct sans GNOME)
 systemctl enable NetworkManager
 systemctl enable firewalld
-systemctl enable arrera-kiosk.service
 systemctl disable gdm || true
 
 # Cible par défaut pour le Kiosque (identique x86)
