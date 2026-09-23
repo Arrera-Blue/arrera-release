@@ -176,6 +176,8 @@ anaconda-install-env-deps
 anaconda-live
 blivet-gui-runtime
 cage
+gnome-kiosk
+mesa-dri-drivers
 
 %end
 
@@ -340,8 +342,18 @@ cat > /usr/bin/arrera-installer-kiosk.sh << 'KIOSK_SCRIPT_EOF'
 #!/bin/bash
 set -e
 
-# Environnement Wayland & Cage
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/0}"
+# Journalisation des actions du Kiosque
+exec 1>>/var/log/arrera-kiosk.log 2>&1
+echo "=== Démarrage Kiosque Anaconda : $(date) ==="
+
+# Si on n'est PAS sur le Live (système déjà installé sur disque dur), relancer agetty normal
+if ! grep -q "rd.live.image" /proc/cmdline 2>/dev/null && [ ! -d /run/initramfs/live ]; then
+    echo "Démarrage sur disque installé détecté : bascule vers agetty standard."
+    exec /sbin/agetty -o '-p -- \\u' --noclear tty1 linux
+fi
+
+# Environnement Wayland & Cage pour root
+export XDG_RUNTIME_DIR="/run/user/0"
 mkdir -p "$XDG_RUNTIME_DIR"
 chmod 0700 "$XDG_RUNTIME_DIR"
 
@@ -351,11 +363,12 @@ export XDG_CURRENT_DESKTOP="GNOME"
 export DESKTOP_SESSION="gnome"
 export GTK_THEME="Adwaita"
 
-# Tolérance pour les environnements virtualisés (QEMU / UTM / virtio-gpu)
+# Tolérance pour les environnements virtualisés (QEMU / UTM / virtio-gpu / LLVMpipe)
 export WLR_LIBINPUT_NO_DEVICES=1
 export WLR_NO_HARDWARE_CURSORS=1
 export WLR_RENDERER_ALLOW_SOFTWARE=1
 
+# Configuration clavier
 KEYMAP="$(localectl status 2>/dev/null | awk -F': ' '/X11 Layout/ {print $2}' | tr -d ' ' || true)"
 if [ -z "$KEYMAP" ]; then
     KEYMAP="$(awk -F'=' '/KEYMAP/ {gsub(/["'\'' ]/, "", $2); print $2}' /etc/vconsole.conf 2>/dev/null || true)"
@@ -363,6 +376,7 @@ fi
 export XKB_DEFAULT_LAYOUT="${KEYMAP:-fr}"
 export XKB_DEFAULT_MODEL="pc105"
 
+# Nettoyage TTY1 et arrêt de Plymouth
 clear >/dev/tty1 2>/dev/null || true
 setterm -cursor off >/dev/tty1 2>/dev/null || true
 plymouth quit 2>/dev/null || true
@@ -379,7 +393,7 @@ on_exit_prompt() {
     echo "Que souhaitez-vous faire ?"
     echo "  1) Redémarrer l'ordinateur (reboot)"
     echo "  2) Éteindre l'ordinateur (poweroff)"
-    echo "  3) Ouvrir une invite de commande (bash)"
+    echo "  3) Ouvrir une invite de commande root (bash)"
     echo "  4) Relancer l'installateur"
     echo "=========================================================="
     read -r -p "Votre choix [1-4] (défaut: 1 dans 15s): " -t 15 CHOICE || CHOICE=1
@@ -389,7 +403,7 @@ on_exit_prompt() {
             systemctl poweroff || poweroff -f
             ;;
         3)
-            echo "Ouverture du shell de secours..."
+            echo "Ouverture du shell root..."
             exec /bin/bash
             ;;
         4)
@@ -402,61 +416,68 @@ on_exit_prompt() {
     esac
 }
 
-# Lancer Anaconda GTK en plein écran via Cage
+echo "Lancement d'Anaconda GTK via Cage..."
 if command -v cage >/dev/null 2>&1; then
-    cage -s -- anaconda --liveinst --graphical || /usr/bin/liveinst || true
+    cage -s -- /usr/bin/liveinst || /usr/bin/liveinst || true
 else
-    anaconda --liveinst --graphical || /usr/bin/liveinst || true
+    /usr/bin/liveinst || true
 fi
 
+echo "Fin du processus Anaconda."
 on_exit_prompt
 exit 0
 KIOSK_SCRIPT_EOF
 
 chmod +x /usr/bin/arrera-installer-kiosk.sh
 
-# Service systemd pour le Kiosque
-cat > /etc/systemd/system/arrera-kiosk.service << 'KIOSK_SERVICE_EOF'
+# Remplacement natif d'agetty sur TTY1 par le script Kiosque Anaconda
+# (Empêche définitivement l'apparition d'un prompt login/mot de passe au boot)
+mkdir -p /etc/systemd/system/getty@tty1.service.d
+cat > /etc/systemd/system/getty@tty1.service.d/override.conf << 'GETTY_OVERRIDE_EOF'
 [Unit]
-Description=Arrera Linux Anaconda Installer Kiosk Session
-Documentation=https://github.com/Arrera-Software
-After=systemd-user-sessions.service NetworkManager.service
-Conflicts=getty@tty1.service gdm.service lightdm.service sddm.service
-Before=getty@tty1.service
+Description=Arrera Linux Anaconda Auto-Installer Console
+After=systemd-user-sessions.service
 
 [Service]
-Type=simple
-ExecStart=/usr/bin/arrera-installer-kiosk.sh
+ExecStart=
+ExecStart=-/usr/bin/arrera-installer-kiosk.sh
+Restart=always
+RestartSec=2s
 StandardInput=tty
-StandardOutput=journal+console
-StandardError=journal+console
+StandardOutput=tty
+StandardError=journal
 TTYPath=/dev/tty1
 TTYReset=yes
 TTYVHangup=yes
 TTYVTDisallocate=yes
-User=root
-WorkingDirectory=/root
-Environment=XDG_RUNTIME_DIR=/run/user/0
-Environment=XDG_SESSION_TYPE=wayland
-Environment=GDK_BACKEND=wayland,x11
-Environment=XKB_DEFAULT_LAYOUT=fr
-Environment=XKB_DEFAULT_MODEL=pc105
-Environment=WLR_LIBINPUT_NO_DEVICES=1
-Environment=WLR_NO_HARDWARE_CURSORS=1
-Restart=always
-RestartSec=1s
+GETTY_OVERRIDE_EOF
+
+# S'assurer que getty@tty1 n'est pas masqué (le drop-in prend le relais proprement)
+rm -f /etc/systemd/system/getty@tty1.service 2>/dev/null || true
+rm -f /etc/systemd/system/arrera-kiosk.service 2>/dev/null || true
+rm -f /etc/systemd/system/multi-user.target.wants/arrera-kiosk.service 2>/dev/null || true
+rm -f /etc/systemd/system/graphical.target.wants/arrera-kiosk.service 2>/dev/null || true
+
+# Service de nettoyage automatique au premier démarrage sur disque dur installé
+cat > /etc/systemd/system/arrera-firstboot-cleanup.service << 'CLEANUP_SERVICE_EOF'
+[Unit]
+Description=Arrera Linux First Boot Cleanup
+ConditionKernelCommandLine=!rd.live.image
+ConditionPathExists=!/run/initramfs/live
+DefaultDependencies=no
+After=local-fs.target
+Before=gdm.service display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c "rm -rf /etc/systemd/system/getty@tty1.service.d; systemctl daemon-reload 2>/dev/null || true; systemctl enable gdm 2>/dev/null || true; systemctl set-default graphical.target 2>/dev/null || true"
+RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target graphical.target
-KIOSK_SERVICE_EOF
+CLEANUP_SERVICE_EOF
 
-# Activation et liaisons fermes dans les cibles de démarrage
-mkdir -p /etc/systemd/system/multi-user.target.wants /etc/systemd/system/graphical.target.wants
-ln -sf /etc/systemd/system/arrera-kiosk.service /etc/systemd/system/multi-user.target.wants/arrera-kiosk.service
-ln -sf /etc/systemd/system/arrera-kiosk.service /etc/systemd/system/graphical.target.wants/arrera-kiosk.service
-
-# Désactiver et masquer getty@tty1 pour empêcher le prompt textuel de voler le tty1
-systemctl mask getty@tty1.service 2>/dev/null || true
+systemctl enable arrera-firstboot-cleanup.service 2>/dev/null || true
 
 # Nettoyage processus pour libérer /tmp
 gpgconf --kill all 2>/dev/null || true
