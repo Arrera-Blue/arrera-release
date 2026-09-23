@@ -220,20 +220,83 @@ cost=100
 COPR_REPO_EOF
 
 # Importer la clé publique GPG officielle du Copr Arrera
-rpm --import https://download.copr.fedorainfracloud.org/results/arrera-software/arrera-blue/pubkey.gpg 2>/dev/null || true
+# Timeout court car le réseau n'est pas garanti dans le chroot livemedia-creator
+curl --silent --max-time 10 --retry 2 \
+    https://download.copr.fedorainfracloud.org/results/arrera-software/arrera-blue/pubkey.gpg \
+    -o /tmp/arrera-copr.gpg 2>/dev/null && rpm --import /tmp/arrera-copr.gpg 2>/dev/null || true
+rm -f /tmp/arrera-copr.gpg
 
 # ================================================================
-# Applications Flatpak (Saveurs bureau : Home / School)
+# Applications Flatpak — Installation au premier démarrage
 # ================================================================
+# Le %post tourne sans réseau réel (chroot livemedia-creator).
+# On crée un service one-shot qui s'exécute UNE SEULE FOIS au premier boot
+# une fois le réseau disponible, puis se désactive automatiquement.
+
+# Pré-enregistrer Flathub (fichier statique, pas besoin de réseau)
 if command -v flatpak &>/dev/null; then
-    echo "Configuration de Flathub et installation des Flatpaks..."
     flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
-    flatpak install -y --noninteractive flathub \
-        it.mijorus.gearlever \
-        io.missioncenter.MissionCenter \
-        io.github.flattool.Warehouse \
-        com.github.tchx84.Flatseal 2>/dev/null || true
 fi
+
+# Script d'installation first-boot
+cat > /usr/lib/arrera/arrera-flatpak-firstboot.sh << 'FLATPAK_SCRIPT_EOF'
+#!/bin/bash
+set -euo pipefail
+LOG="/var/log/arrera-flatpak-firstboot.log"
+exec >> "$LOG" 2>&1
+echo "=== Arrera Flatpak First-Boot : $(date) ==="
+
+# Attendre que Flathub soit joignable (max 120s)
+for i in $(seq 1 24); do
+    if curl --silent --max-time 5 https://dl.flathub.org > /dev/null 2>&1; then
+        echo "Réseau OK."
+        break
+    fi
+    echo "Attente réseau ($i/24)..."
+    sleep 5
+done
+
+# S'assurer que le remote Flathub est enregistré
+flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
+
+# Installer les applications Flatpak
+flatpak install -y --noninteractive flathub \
+    it.mijorus.gearlever \
+    io.missioncenter.MissionCenter \
+    io.github.flattool.Warehouse \
+    com.github.tchx84.Flatseal || true
+
+echo "=== Installation Flatpak terminée : $(date) ==="
+
+# Se désactiver après la première exécution réussie
+systemctl disable arrera-flatpak-firstboot.service
+FLATPAK_SCRIPT_EOF
+
+chmod +x /usr/lib/arrera/arrera-flatpak-firstboot.sh
+
+# Service systemd one-shot (s'exécute une seule fois au premier boot)
+cat > /etc/systemd/system/arrera-flatpak-firstboot.service << 'FLATPAK_SERVICE_EOF'
+[Unit]
+Description=Arrera Linux - Installation Flatpaks au premier démarrage
+Documentation=https://github.com/Arrera-Software
+After=network-online.target flatpak-system-helper.service
+Wants=network-online.target
+ConditionPathExists=!/var/lib/arrera/.flatpak-firstboot-done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/arrera/arrera-flatpak-firstboot.sh
+ExecStartPost=/bin/bash -c 'mkdir -p /var/lib/arrera && touch /var/lib/arrera/.flatpak-firstboot-done'
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+FLATPAK_SERVICE_EOF
+
+mkdir -p /usr/lib/arrera /var/lib/arrera
+systemctl enable arrera-flatpak-firstboot.service
 
 # ================================================================
 # Lancement direct d'Anaconda GTK sur le Live (sans session GNOME)
