@@ -608,7 +608,21 @@ STUB_EOF
     cp -f /boot/efi/EFI/fedora/grub.cfg /boot/efi/EFI/BOOT/grub.cfg 2>/dev/null || true
 
     # Enregistrement dans la NVRAM via efibootmgr
-    if [ -d /sys/firmware/efi ] && command -v efibootmgr >/dev/null 2>&1; then
+    # IMPORTANT : efibootmgr a besoin de efivarfs monté sur /sys/firmware/efi/efivars.
+    # Ce sous-point de montage n'est pas toujours propagé dans le chroot Calamares
+    # (bind mount non récursif de /sys), ce qui fait échouer silencieusement la
+    # création de l'entrée NVRAM (aucune erreur visible car masquée par || true).
+    # Sans entrée NVRAM, un disque FIXE (pas removable comme l'ISO) ne démarre pas :
+    # le firmware UEFI retombe sur son propre menu "Boot Manager".
+    if [ -d /sys/firmware/efi ] && ! mountpoint -q /sys/firmware/efi/efivars; then
+        echo "-> efivarfs non monté dans le chroot, montage manuel..."
+        mount -t efivarfs efivarfs /sys/firmware/efi/efivars 2>/dev/null || true
+    fi
+
+    if [ -d /sys/firmware/efi/efivars ] && command -v efibootmgr >/dev/null 2>&1; then
+        if ! efibootmgr >/dev/null 2>&1; then
+            echo "-> AVERTISSEMENT : efibootmgr ne peut pas accéder aux variables EFI (efivarfs indisponible dans ce contexte)."
+        fi
         ESP_DEV=$(findmnt -n -o SOURCE /boot/efi 2>/dev/null || true)
         if [ -n "$ESP_DEV" ]; then
             ESP_DISK=""
@@ -633,9 +647,18 @@ STUB_EOF
                 for bnum in $(efibootmgr 2>/dev/null | grep -iE "Arrera|fedora" | awk '{print $1}' | tr -d 'Boot*' | tr -d ':'); do
                     efibootmgr -b "$bnum" -B 2>/dev/null || true
                 done
-                efibootmgr -c -d "$ESP_DISK" -p "$ESP_PART" -w -L "Arrera Blue 2026" -l "\\EFI\\fedora\\$SHIM_BIN" 2>/dev/null || true
+                if ! efibootmgr -c -d "$ESP_DISK" -p "$ESP_PART" -w -L "Arrera Blue 2026" -l "\\EFI\\fedora\\$SHIM_BIN" 2>&1; then
+                    echo "-> ERREUR : impossible de créer l'entrée NVRAM UEFI 'Arrera Blue 2026'."
+                    echo "-> Le disque risque de ne pas démarrer automatiquement (utiliser le fallback /EFI/BOOT/)."
+                fi
+            else
+                echo "-> AVERTISSEMENT : impossible de déterminer disque/partition ESP ($ESP_DEV), entrée NVRAM non créée."
             fi
+        else
+            echo "-> AVERTISSEMENT : /boot/efi introuvable via findmnt, entrée NVRAM non créée."
         fi
+    else
+        echo "-> AVERTISSEMENT : efivarfs indisponible, entrée NVRAM UEFI non créée (le firmware devra utiliser /EFI/BOOT/ fallback)."
     fi
     sync
 fi
