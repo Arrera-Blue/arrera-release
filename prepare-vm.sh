@@ -43,6 +43,7 @@ COMMON_PKGS=(
     grub2-tools
     grub2-tools-extra
     efibootmgr
+    systemd-boot-unsigned
     git
 )
 
