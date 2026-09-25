@@ -55,10 +55,15 @@ services --enabled=NetworkManager,firewalld,arrera-kiosk --disabled=gdm
 @core
 @hardware-support
 
-# Noyau et démarrage ARM64 (aarch64 systemd-boot UEFI)
+# Noyau et démarrage ARM64 (aarch64 systemd-boot cible + amorçage Live ISO Lorax)
 kernel
 dracut-live
 systemd-boot-unsigned
+grub2-efi-aa64
+grub2-efi-aa64-cdboot
+shim-aa64
+grub2-tools
+grub2-tools-extra
 efibootmgr
 efivar
 dosfstools
