@@ -630,37 +630,36 @@ script:
       timeout: 600
 CALAMARES_POSTINSTALL_CONF
 
-# Écriture de bootloader.conf Calamares (systemd-boot natif)
+# Écriture de bootloader.conf Calamares (GRUB2 + Shim officiel Secure Boot pour x86_64)
 cat > /etc/calamares/modules/bootloader.conf << 'CALAMARES_BOOTLOADER_CONF'
-# Configuration du module bootloader pour Arrera Linux
-# Backend : systemd-boot (UEFI natif pour x86_64 et aarch64)
+# Configuration du module bootloader pour Arrera Linux x86_64
 ---
-efiBootLoader: "systemd-boot"
+efiBootLoader: "sb-shim"
+kernelSearchPath: "/usr/lib/modules"
+kernelPattern: "^vmlinuz.*"
+loaderEntries:
+  - "timeout 0"
+kernelParams: [ "rhgb", "quiet", "splash", "loglevel=3", "rd.udev.log_priority=3", "systemd.show_status=false", "vt.global_cursor_default=0" ]
+bootloaderEntryName: "Arrera Blue 2026"
 grubInstall: "grub2-install"
 grubMkconfig: "grub2-mkconfig"
 grubCfg: "/boot/grub2/grub.cfg"
 grubProbe: "grub2-probe"
 efiBootMgr: "efibootmgr"
-kernelSearchPath: "/usr/lib/modules"
-kernelPattern: "^vmlinuz.*"
-loaderEntries:
-  - "timeout 0"
-  - "console-mode keep"
-  - "editor no"
-kernelParams: [ "rhgb", "quiet", "splash", "loglevel=3", "rd.udev.log_priority=3", "systemd.show_status=false", "vt.global_cursor_default=0" ]
-bootloaderEntryName: "Arrera Blue 2026"
+efiBootloaderId: "fedora"
+installEFIFallback: true
 CALAMARES_BOOTLOADER_CONF
 
-# Écriture de partition.conf Calamares (ESP 1 Go sur /boot pour systemd-boot)
+# Écriture de partition.conf Calamares (ESP sur /boot/efi pour x86_64)
 cat > /etc/calamares/modules/partition.conf << 'CALAMARES_PARTITION_CONF'
-# Configuration du module partition pour Arrera Linux
+# Configuration du module partition pour Arrera Linux x86_64
 ---
 defaultFileSystemType: "ext4"
 availableFileSystemTypes: ["ext4", "btrfs", "xfs"]
 createHybridBootloaderLayout: false
 defaultPartitionTableType: "gpt"
-efiSystemPartition: "/boot"
-efiSystemPartitionSize: 1024M
+efiSystemPartition: "/boot/efi"
+efiSystemPartitionSize: 600M
 essentialMounts: [ "live-*", "control", "ventoy" ]
 lvm:
     enable: false

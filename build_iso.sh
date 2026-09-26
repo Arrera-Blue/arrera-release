@@ -263,8 +263,7 @@ if [ $BUILD_STATUS -eq 0 ] && [ -f "$RESULT_DIR/$ISO_NAME" ]; then
     info "  Taille  : $ISO_SIZE"
     info "  Volume  : $VOLID"
     info "  Durée   : ${BUILD_MINS}m ${BUILD_SECS}s"
-    echo ""
-    info "Pour tester, lancez dans une VM (UEFI obligatoire pour systemd-boot) :"
+    info "Pour tester, lancez dans une VM :"
     if [ "$ARCH" = "x86_64" ]; then
         if [ -f /usr/share/edk2/ovmf/OVMF_CODE.fd ]; then
             info "  qemu-system-x86_64 -m 4096 -bios /usr/share/edk2/ovmf/OVMF_CODE.fd -cdrom $RESULT_DIR/$ISO_NAME -boot d"
