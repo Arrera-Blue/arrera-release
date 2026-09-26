@@ -636,6 +636,11 @@ cat > /etc/calamares/modules/bootloader.conf << 'CALAMARES_BOOTLOADER_CONF'
 # Backend : systemd-boot (UEFI natif pour x86_64 et aarch64)
 ---
 efiBootLoader: "systemd-boot"
+grubInstall: "grub2-install"
+grubMkconfig: "grub2-mkconfig"
+grubCfg: "/boot/grub2/grub.cfg"
+grubProbe: "grub2-probe"
+efiBootMgr: "efibootmgr"
 kernelSearchPath: "/usr/lib/modules"
 kernelPattern: "^vmlinuz.*"
 loaderEntries:

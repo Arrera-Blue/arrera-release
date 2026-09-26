@@ -55,6 +55,7 @@ case "$ARCH" in
             grub2-pc-modules
             grub2-efi-x64-modules
             shim-x64
+            edk2-ovmf
         )
         ;;
     aarch64|arm64)
@@ -62,6 +63,7 @@ case "$ARCH" in
             grub2-efi-aa64-modules
             grub2-efi-aa64-cdboot
             shim-aa64
+            edk2-aarch64
         )
         ;;
     *)

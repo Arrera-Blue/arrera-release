@@ -264,9 +264,16 @@ if [ $BUILD_STATUS -eq 0 ] && [ -f "$RESULT_DIR/$ISO_NAME" ]; then
     info "  Volume  : $VOLID"
     info "  Durée   : ${BUILD_MINS}m ${BUILD_SECS}s"
     echo ""
-    info "Pour tester, lancez dans une VM :"
+    info "Pour tester, lancez dans une VM (UEFI obligatoire pour systemd-boot) :"
     if [ "$ARCH" = "x86_64" ]; then
-        info "  qemu-system-x86_64 -m 4096 -cdrom $RESULT_DIR/$ISO_NAME -boot d"
+        if [ -f /usr/share/edk2/ovmf/OVMF_CODE.fd ]; then
+            info "  qemu-system-x86_64 -m 4096 -bios /usr/share/edk2/ovmf/OVMF_CODE.fd -cdrom $RESULT_DIR/$ISO_NAME -boot d"
+        elif [ -f /usr/share/OVMF/OVMF_CODE.fd ]; then
+            info "  qemu-system-x86_64 -m 4096 -bios /usr/share/OVMF/OVMF_CODE.fd -cdrom $RESULT_DIR/$ISO_NAME -boot d"
+        else
+            info "  qemu-system-x86_64 -m 4096 -bios <chemin-vers-OVMF_CODE.fd> -cdrom $RESULT_DIR/$ISO_NAME -boot d"
+        fi
+        info "  (Si VirtualBox : cocher 'Activer EFI' dans Configuration > Système > Carte mère)"
     else
         info "  qemu-system-aarch64 -m 4096 -cpu cortex-a57 -M virt -bios /usr/share/edk2/aarch64/QEMU_EFI.fd -cdrom $RESULT_DIR/$ISO_NAME"
     fi
