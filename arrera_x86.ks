@@ -352,8 +352,9 @@ else
     ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf 2>/dev/null || true
 fi
 
-# 2. Nettoyage et configuration de systemd-boot
-echo "[2/8] Configuration de systemd-boot et enregistrement des noyaux..."
+# 2. Nettoyage et configuration du chargeur d'amorçage
+TARGET_ARCH="$(uname -m)"
+echo "[2/8] Configuration du chargeur d'amorçage pour architecture : $TARGET_ARCH..."
 
 CURRENT_MACHINE_ID=$(cat /etc/machine-id 2>/dev/null || true)
 
@@ -393,37 +394,43 @@ fi
 ROOT_PARAM="root=UUID=${TARGET_ROOT_UUID}"
 echo "-> Racine cible : $TARGET_ROOT_DEV (UUID: $TARGET_ROOT_UUID)"
 
-# 1. Sauvegarde de la ligne de commande officielle du noyau (/etc/kernel/cmdline)
-mkdir -p /etc/kernel
-echo "${ROOT_PARAM} ro ${SILENT_CMDLINE}" > /etc/kernel/cmdline
-echo "-> Fichier /etc/kernel/cmdline configuré : $(cat /etc/kernel/cmdline)"
+case "$TARGET_ARCH" in
+    aarch64|arm64)
+        # ==============================================================================
+        # CAS ARM64 : systemd-boot (contourne le bug Calamares et amorce de façon moderne)
+        # ==============================================================================
+        echo "-> [ARM64] Configuration de systemd-boot et enregistrement des noyaux..."
 
-# 2. Configuration de kernel-install pour utiliser la disposition BLS
-mkdir -p /etc/kernel
-cat > /etc/kernel/install.conf << 'EOF'
+        # 1. Sauvegarde de la ligne de commande officielle du noyau (/etc/kernel/cmdline)
+        mkdir -p /etc/kernel
+        echo "${ROOT_PARAM} ro ${SILENT_CMDLINE}" > /etc/kernel/cmdline
+        echo "-> Fichier /etc/kernel/cmdline configuré : $(cat /etc/kernel/cmdline)"
+
+        # 2. Configuration de kernel-install pour utiliser la disposition BLS
+        cat > /etc/kernel/install.conf << 'EOF'
 layout=bls
 initrd_generator=dracut
 EOF
 
-# 3. Identifier la partition ESP (généralement montée sur /boot ou /boot/efi)
-ESP_PATH="/boot"
-if [ ! -d "$ESP_PATH/loader" ] && [ -d "/boot/efi/EFI" ]; then
-    ESP_PATH="/boot/efi"
-fi
+        # 3. Identifier la partition ESP (généralement montée sur /boot ou /boot/efi)
+        ESP_PATH="/boot"
+        if [ ! -d "$ESP_PATH/loader" ] && [ -d "/boot/efi/EFI" ]; then
+            ESP_PATH="/boot/efi"
+        fi
 
-if ! mountpoint -q "$ESP_PATH" 2>/dev/null; then
-    if grep -q "$ESP_PATH" /etc/fstab 2>/dev/null; then
-        mount "$ESP_PATH" 2>/dev/null || true
-    fi
-fi
+        if ! mountpoint -q "$ESP_PATH" 2>/dev/null; then
+            if grep -q "$ESP_PATH" /etc/fstab 2>/dev/null; then
+                mount "$ESP_PATH" 2>/dev/null || true
+            fi
+        fi
 
-# 4. Installation des binaires systemd-boot dans l'ESP
-echo "-> Installation de systemd-boot via bootctl (chemin: $ESP_PATH)..."
-bootctl --path="$ESP_PATH" --no-variables install 2>/dev/null || bootctl --path="$ESP_PATH" install 2>/dev/null || true
+        # 4. Installation des binaires systemd-boot dans l'ESP
+        echo "-> Installation de systemd-boot via bootctl (chemin: $ESP_PATH)..."
+        bootctl --path="$ESP_PATH" --no-variables install 2>/dev/null || bootctl --path="$ESP_PATH" install 2>/dev/null || true
 
-# 5. Configuration générale du chargeur (/loader/loader.conf)
-mkdir -p "$ESP_PATH/loader"
-cat > "$ESP_PATH/loader/loader.conf" << 'EOF'
+        # 5. Configuration générale du chargeur (/loader/loader.conf)
+        mkdir -p "$ESP_PATH/loader"
+        cat > "$ESP_PATH/loader/loader.conf" << 'EOF'
 default @saved
 timeout 0
 console-mode keep
@@ -432,101 +439,250 @@ auto-entries 1
 auto-firmware 1
 EOF
 
-# Nettoyer les entrées BLS fantômes du média Live si présentes
-if [ -n "$CURRENT_MACHINE_ID" ] && [ -d "$ESP_PATH/loader/entries" ]; then
-    for conf in "$ESP_PATH"/loader/entries/*.conf; do
-        [ -f "$conf" ] || continue
-        if ! grep -q "$CURRENT_MACHINE_ID" <<< "$(basename "$conf")"; then
-            echo "-> Suppression entrée BLS obsolète du Live : $(basename "$conf")"
-            rm -f "$conf"
+        # Nettoyer les entrées BLS fantômes du média Live si présentes
+        if [ -n "$CURRENT_MACHINE_ID" ] && [ -d "$ESP_PATH/loader/entries" ]; then
+            for conf in "$ESP_PATH"/loader/entries/*.conf; do
+                [ -f "$conf" ] || continue
+                if ! grep -q "$CURRENT_MACHINE_ID" <<< "$(basename "$conf")"; then
+                    echo "-> Suppression entrée BLS obsolète du Live : $(basename "$conf")"
+                    rm -f "$conf"
+                fi
+            done
         fi
-    done
-fi
 
-# 6. Installation des entrées de noyau via kernel-install pour tous les noyaux installés
-for kimg in /usr/lib/modules/*/vmlinuz /boot/vmlinuz-*; do
-    [ -f "$kimg" ] || continue
-    case "$kimg" in
-        *rescue*) continue ;;
-    esac
-    KVER=""
-    if [[ "$kimg" =~ /usr/lib/modules/([^/]+)/vmlinuz ]]; then
-        KVER="${BASH_REMATCH[1]}"
-    elif [[ "$kimg" =~ /boot/vmlinuz-(.+) ]]; then
-        KVER="${BASH_REMATCH[1]}"
-    fi
-    [ -n "$KVER" ] || continue
-    echo "-> Génération de l'entrée systemd-boot pour le noyau $KVER..."
-    kernel-install add "$KVER" "$kimg" 2>/dev/null || true
-done
+        # 6. Installation des entrées de noyau via kernel-install pour tous les noyaux installés
+        for kimg in /usr/lib/modules/*/vmlinuz /boot/vmlinuz-*; do
+            [ -f "$kimg" ] || continue
+            case "$kimg" in
+                *rescue*) continue ;;
+            esac
+            KVER=""
+            if [[ "$kimg" =~ /usr/lib/modules/([^/]+)/vmlinuz ]]; then
+                KVER="${BASH_REMATCH[1]}"
+            elif [[ "$kimg" =~ /boot/vmlinuz-(.+) ]]; then
+                KVER="${BASH_REMATCH[1]}"
+            fi
+            [ -n "$KVER" ] || continue
+            echo "-> Génération de l'entrée systemd-boot pour le noyau $KVER..."
+            kernel-install add "$KVER" "$kimg" 2>/dev/null || true
+        done
 
-# Personnaliser le titre dans les entrées BLS générées pour afficher "Arrera Blue 2026"
-if [ -d "$ESP_PATH/loader/entries" ]; then
-    for entry in "$ESP_PATH"/loader/entries/*.conf; do
-        [ -f "$entry" ] || continue
-        sed -i 's/^title Fedora.*/title Arrera Blue 2026/g' "$entry" 2>/dev/null || true
-        sed -i 's/^title Arrera.*/title Arrera Blue 2026/g' "$entry" 2>/dev/null || true
-    done
-fi
+        # Personnaliser le titre dans les entrées BLS générées pour afficher "Arrera Blue 2026"
+        if [ -d "$ESP_PATH/loader/entries" ]; then
+            for entry in "$ESP_PATH"/loader/entries/*.conf; do
+                [ -f "$entry" ] || continue
+                sed -i 's/^title Fedora.*/title Arrera Blue 2026/g' "$entry" 2>/dev/null || true
+                sed -i 's/^title Arrera.*/title Arrera Blue 2026/g' "$entry" 2>/dev/null || true
+            done
+        fi
 
-# 7. Copie du fallback universel EFI (/EFI/BOOT/BOOT*.EFI) pour compatibilité firmware VM (UTM, QEMU)
-TARGET_ARCH=$(uname -m)
-case "$TARGET_ARCH" in
-    aarch64|arm64)
-        BOOT_FALLBACK="BOOTAA64.EFI"
-        SDBOOT_NAME="systemd-bootaa64.efi"
+        # 7. Copie du fallback universel EFI (/EFI/BOOT/BOOTAA64.EFI) pour compatibilité firmware VM
+        mkdir -p "$ESP_PATH/EFI/BOOT"
+        if [ -f "/usr/lib/systemd/boot/efi/systemd-bootaa64.efi" ]; then
+            cp -f "/usr/lib/systemd/boot/efi/systemd-bootaa64.efi" "$ESP_PATH/EFI/BOOT/BOOTAA64.EFI" 2>/dev/null || true
+        elif [ -f "$ESP_PATH/EFI/systemd/systemd-bootaa64.efi" ]; then
+            cp -f "$ESP_PATH/EFI/systemd/systemd-bootaa64.efi" "$ESP_PATH/EFI/BOOT/BOOTAA64.EFI" 2>/dev/null || true
+        fi
+
+        # 8. Enregistrement propre dans la NVRAM UEFI
+        if [ -d /sys/firmware/efi ] && ! mountpoint -q /sys/firmware/efi/efivars; then
+            mount -t efivarfs efivarfs /sys/firmware/efi/efivars 2>/dev/null || true
+        fi
+
+        if [ -d /sys/firmware/efi/efivars ] && command -v efibootmgr >/dev/null 2>&1; then
+            ESP_DEV=$(findmnt -n -o SOURCE "$ESP_PATH" 2>/dev/null || true)
+            if [ -n "$ESP_DEV" ]; then
+                ESP_DISK=""
+                ESP_PART=""
+                if command -v lsblk >/dev/null 2>&1; then
+                    PK=$(lsblk -no PKNAME "$ESP_DEV" 2>/dev/null || true)
+                    [ -n "$PK" ] && ESP_DISK="/dev/$PK"
+                    ESP_PART=$(lsblk -no PARTN "$ESP_DEV" 2>/dev/null || true)
+                fi
+                if [ -z "$ESP_DISK" ] || [ -z "$ESP_PART" ]; then
+                    if [[ "$ESP_DEV" =~ ^(/dev/[a-zA-Z]+)([0-9]+)$ ]]; then
+                        ESP_DISK="${BASH_REMATCH[1]}"
+                        ESP_PART="${BASH_REMATCH[2]}"
+                    elif [[ "$ESP_DEV" =~ ^(/dev/[a-zA-Z0-9]+)p([0-9]+)$ ]]; then
+                        ESP_DISK="${BASH_REMATCH[1]}"
+                        ESP_PART="${BASH_REMATCH[2]}"
+                    fi
+                fi
+
+                if [ -n "$ESP_DISK" ] && [ -n "$ESP_PART" ]; then
+                    echo "-> Enregistrement UEFI NVRAM Arrera ($ESP_DISK partition $ESP_PART)..."
+                    for bnum in $(efibootmgr 2>/dev/null | grep -iE "Arrera|systemd-boot|fedora" | awk '{print $1}' | tr -d 'Boot*' | tr -d ':'); do
+                        efibootmgr -b "$bnum" -B 2>/dev/null || true
+                    done
+                    efibootmgr -c -d "$ESP_DISK" -p "$ESP_PART" -w -L "Arrera Blue 2026" -l "\\EFI\\systemd\\systemd-bootaa64.efi" 2>/dev/null || true
+                fi
+            fi
+        fi
         ;;
+
     x86_64|amd64|*)
-        BOOT_FALLBACK="BOOTX64.EFI"
-        SDBOOT_NAME="systemd-bootx64.efi"
+        # ==============================================================================
+        # CAS x86_64 : GRUB2 + Shim (Certifié Microsoft UEFI CA pour Secure Boot natif)
+        # ==============================================================================
+        echo "-> [x86_64] Configuration de GRUB2 + Shim pour démarrage UEFI et Secure Boot..."
+
+        # 1. Écriture de /etc/default/grub avec les réglages officiels Arrera
+        mkdir -p /etc/default
+        cat > /etc/default/grub << 'GRUB_DEFAULT_EOF'
+GRUB_TIMEOUT=0
+GRUB_DISTRIBUTOR="Arrera Blue 2026"
+GRUB_DEFAULT=saved
+GRUB_DISABLE_SUBMENU=true
+GRUB_TERMINAL_OUTPUT="console"
+GRUB_CMDLINE_LINUX="rhgb quiet splash loglevel=3 rd.udev.log_priority=3 systemd.show_status=false vt.global_cursor_default=0"
+GRUB_DISABLE_RECOVERY="true"
+GRUB_ENABLE_BLSCFG=true
+GRUB_DEFAULT_KEYMAP="fr"
+GRUB_THEME=""
+GRUB_BACKGROUND=""
+GRUB_DEFAULT_EOF
+
+        # Liens symboliques standards Fedora
+        ln -sf ../boot/grub2/grub.cfg /etc/grub2.cfg 2>/dev/null || true
+        ln -sf ../boot/grub2/grub.cfg /etc/grub2-efi.cfg 2>/dev/null || true
+
+        # 2. Génération du fichier principal grub.cfg
+        mkdir -p /boot/grub2
+        echo "-> Génération du grub.cfg (/boot/grub2/grub.cfg)..."
+        grub2-mkconfig -o /boot/grub2/grub.cfg 2>/dev/null || true
+
+        # 3. Finalisation UEFI et ESP (/boot/efi)
+        if [ -d /sys/firmware/efi ] || [ -d /boot/efi ] || grep -q '/boot/efi' /etc/fstab 2>/dev/null; then
+            echo "-> Système UEFI x86_64 détecté : finalisation de la partition ESP..."
+
+            if ! mountpoint -q /boot/efi 2>/dev/null; then
+                if grep -q '/boot/efi' /etc/fstab 2>/dev/null; then
+                    ESP_FSTAB_DEV=$(awk '$2 == "/boot/efi" {print $1}' /etc/fstab | head -n 1)
+                    if [ -n "$ESP_FSTAB_DEV" ]; then
+                        mkdir -p /boot/efi
+                        mount "$ESP_FSTAB_DEV" /boot/efi 2>/dev/null || mount /boot/efi 2>/dev/null || true
+                    fi
+                else
+                    mount /boot/efi 2>/dev/null || true
+                fi
+            fi
+
+            mkdir -p /boot/efi/EFI/fedora
+            mkdir -p /boot/efi/EFI/BOOT
+
+            # Copie des binaires EFI officiels signés
+            for src in /usr/share/arrera-efi/EFI/fedora \
+                       /usr/lib/efi/shim/*/EFI/fedora \
+                       /usr/lib/efi/grub2/*/EFI/fedora; do
+                if [ -d "$src" ]; then
+                    cp -a "$src"/* /boot/efi/EFI/fedora/ 2>/dev/null || true
+                fi
+            done
+
+            if [ ! -f "/boot/efi/EFI/fedora/shimx64.efi" ]; then
+                FOUND_SHIM=$(find /usr -name "shimx64.efi" 2>/dev/null | head -n 1 || true)
+                [ -n "$FOUND_SHIM" ] && cp -f "$FOUND_SHIM" "/boot/efi/EFI/fedora/shimx64.efi" 2>/dev/null || true
+            fi
+            if [ ! -f "/boot/efi/EFI/fedora/grubx64.efi" ]; then
+                FOUND_GRUB=$(find /usr -name "grubx64.efi" 2>/dev/null | head -n 1 || true)
+                [ -n "$FOUND_GRUB" ] && cp -f "$FOUND_GRUB" "/boot/efi/EFI/fedora/grubx64.efi" 2>/dev/null || true
+            fi
+
+            # Fallback universel /EFI/BOOT/BOOTX64.EFI
+            if [ -f "/boot/efi/EFI/fedora/shimx64.efi" ]; then
+                cp -f "/boot/efi/EFI/fedora/shimx64.efi" "/boot/efi/EFI/BOOT/BOOTX64.EFI" 2>/dev/null || true
+            elif [ -f "/usr/share/arrera-efi/EFI/BOOT/BOOTX64.EFI" ]; then
+                cp -f "/usr/share/arrera-efi/EFI/BOOT/BOOTX64.EFI" "/boot/efi/EFI/BOOT/BOOTX64.EFI" 2>/dev/null || true
+            fi
+
+            if [ -f "/boot/efi/EFI/fedora/grubx64.efi" ]; then
+                cp -f "/boot/efi/EFI/fedora/grubx64.efi" "/boot/efi/EFI/BOOT/grubx64.efi" 2>/dev/null || true
+            fi
+
+            for f in mmx64.efi fbx64.efi BOOTX64.CSV; do
+                if [ -f "/boot/efi/EFI/fedora/$f" ]; then
+                    cp -f "/boot/efi/EFI/fedora/$f" "/boot/efi/EFI/BOOT/$f" 2>/dev/null || true
+                fi
+            done
+
+            # Stub EFI de redirection /boot/efi/EFI/fedora/grub.cfg
+            STUB_OK=0
+            if command -v gen_grub_cfgstub >/dev/null 2>&1; then
+                echo "-> Génération officielle du stub GRUB EFI via gen_grub_cfgstub..."
+                if gen_grub_cfgstub /boot/grub2 /boot/efi/EFI/fedora 2>/dev/null; then
+                    [ -s /boot/efi/EFI/fedora/grub.cfg ] && STUB_OK=1
+                fi
+            fi
+
+            if [ "$STUB_OK" -eq 0 ]; then
+                BOOT_UUID=""
+                GRUB_RELPATH="/boot/grub2"
+                if mountpoint -q /boot 2>/dev/null; then
+                    BOOT_DEV=$(findmnt -n -o SOURCE /boot 2>/dev/null || true)
+                    GRUB_RELPATH="/grub2"
+                else
+                    BOOT_DEV="$TARGET_ROOT_DEV"
+                    GRUB_RELPATH="/boot/grub2"
+                fi
+                if [ -n "$BOOT_DEV" ]; then
+                    BOOT_UUID=$(blkid -s UUID -o value "$BOOT_DEV" 2>/dev/null || true)
+                fi
+                if [ -z "$BOOT_UUID" ]; then
+                    BOOT_UUID="$TARGET_ROOT_UUID"
+                fi
+                if [ -n "$BOOT_UUID" ]; then
+                    echo "-> Écriture du stub GRUB EFI (UUID: ${BOOT_UUID}, chemin: ${GRUB_RELPATH})..."
+                    cat > /boot/efi/EFI/fedora/grub.cfg << STUB_EOF
+search --no-floppy --fs-uuid --set=dev ${BOOT_UUID}
+set prefix=(\$dev)${GRUB_RELPATH}
+export \$prefix
+configfile \$prefix/grub.cfg
+STUB_EOF
+                fi
+            fi
+
+            cp -f /boot/efi/EFI/fedora/grub.cfg /boot/efi/EFI/BOOT/grub.cfg 2>/dev/null || true
+
+            # Enregistrement dans la NVRAM via efibootmgr vers shimx64.efi
+            if [ -d /sys/firmware/efi ] && ! mountpoint -q /sys/firmware/efi/efivars; then
+                mount -t efivarfs efivarfs /sys/firmware/efi/efivars 2>/dev/null || true
+            fi
+
+            if [ -d /sys/firmware/efi/efivars ] && command -v efibootmgr >/dev/null 2>&1; then
+                ESP_DEV=$(findmnt -n -o SOURCE /boot/efi 2>/dev/null || true)
+                if [ -n "$ESP_DEV" ]; then
+                    ESP_DISK=""
+                    ESP_PART=""
+                    if command -v lsblk >/dev/null 2>&1; then
+                        PK=$(lsblk -no PKNAME "$ESP_DEV" 2>/dev/null || true)
+                        [ -n "$PK" ] && ESP_DISK="/dev/$PK"
+                        ESP_PART=$(lsblk -no PARTN "$ESP_DEV" 2>/dev/null || true)
+                    fi
+                    if [ -z "$ESP_DISK" ] || [ -z "$ESP_PART" ]; then
+                        if [[ "$ESP_DEV" =~ ^(/dev/[a-zA-Z]+)([0-9]+)$ ]]; then
+                            ESP_DISK="${BASH_REMATCH[1]}"
+                            ESP_PART="${BASH_REMATCH[2]}"
+                        elif [[ "$ESP_DEV" =~ ^(/dev/[a-zA-Z0-9]+)p([0-9]+)$ ]]; then
+                            ESP_DISK="${BASH_REMATCH[1]}"
+                            ESP_PART="${BASH_REMATCH[2]}"
+                        fi
+                    fi
+
+                    if [ -n "$ESP_DISK" ] && [ -n "$ESP_PART" ]; then
+                        echo "-> Enregistrement UEFI NVRAM Arrera ($ESP_DISK partition $ESP_PART)..."
+                        for bnum in $(efibootmgr 2>/dev/null | grep -iE "Arrera|fedora|systemd-boot" | awk '{print $1}' | tr -d 'Boot*' | tr -d ':'); do
+                            efibootmgr -b "$bnum" -B 2>/dev/null || true
+                        done
+                        efibootmgr -c -d "$ESP_DISK" -p "$ESP_PART" -w -L "Arrera Blue 2026" -l "\\EFI\\fedora\\shimx64.efi" 2>/dev/null || true
+                    fi
+                fi
+            fi
+        fi
         ;;
 esac
 
-mkdir -p "$ESP_PATH/EFI/BOOT"
-SDBOOT_SRC="/usr/lib/systemd/boot/efi/$SDBOOT_NAME"
-if [ -f "$SDBOOT_SRC" ]; then
-    cp -f "$SDBOOT_SRC" "$ESP_PATH/EFI/BOOT/$BOOT_FALLBACK" 2>/dev/null || true
-elif [ -f "$ESP_PATH/EFI/systemd/$SDBOOT_NAME" ]; then
-    cp -f "$ESP_PATH/EFI/systemd/$SDBOOT_NAME" "$ESP_PATH/EFI/BOOT/$BOOT_FALLBACK" 2>/dev/null || true
-elif [ -f "$ESP_PATH/EFI/systemd/"systemd-boot*.efi ]; then
-    cp -f "$ESP_PATH/EFI/systemd/"systemd-boot*.efi "$ESP_PATH/EFI/BOOT/$BOOT_FALLBACK" 2>/dev/null || true
-fi
-
-# 8. Enregistrement propre dans la NVRAM UEFI
-if [ -d /sys/firmware/efi ] && ! mountpoint -q /sys/firmware/efi/efivars; then
-    mount -t efivarfs efivarfs /sys/firmware/efi/efivars 2>/dev/null || true
-fi
-
-if [ -d /sys/firmware/efi/efivars ] && command -v efibootmgr >/dev/null 2>&1; then
-    ESP_DEV=$(findmnt -n -o SOURCE "$ESP_PATH" 2>/dev/null || true)
-    if [ -n "$ESP_DEV" ]; then
-        ESP_DISK=""
-        ESP_PART=""
-        if command -v lsblk >/dev/null 2>&1; then
-            PK=$(lsblk -no PKNAME "$ESP_DEV" 2>/dev/null || true)
-            [ -n "$PK" ] && ESP_DISK="/dev/$PK"
-            ESP_PART=$(lsblk -no PARTN "$ESP_DEV" 2>/dev/null || true)
-        fi
-        if [ -z "$ESP_DISK" ] || [ -z "$ESP_PART" ]; then
-            if [[ "$ESP_DEV" =~ ^(/dev/[a-zA-Z]+)([0-9]+)$ ]]; then
-                ESP_DISK="${BASH_REMATCH[1]}"
-                ESP_PART="${BASH_REMATCH[2]}"
-            elif [[ "$ESP_DEV" =~ ^(/dev/[a-zA-Z0-9]+)p([0-9]+)$ ]]; then
-                ESP_DISK="${BASH_REMATCH[1]}"
-                ESP_PART="${BASH_REMATCH[2]}"
-            fi
-        fi
-
-        if [ -n "$ESP_DISK" ] && [ -n "$ESP_PART" ]; then
-            echo "-> Enregistrement UEFI NVRAM Arrera ($ESP_DISK partition $ESP_PART)..."
-            for bnum in $(efibootmgr 2>/dev/null | grep -iE "Arrera|systemd-boot|fedora" | awk '{print $1}' | tr -d 'Boot*' | tr -d ':'); do
-                efibootmgr -b "$bnum" -B 2>/dev/null || true
-            done
-            efibootmgr -c -d "$ESP_DISK" -p "$ESP_PART" -w -L "Arrera Blue 2026" -l "\\EFI\\systemd\\$SDBOOT_NAME" 2>/dev/null || true
-        fi
-    fi
-fi
 sync
+
 
 # 3. Configuration et régénération du thème Plymouth Arrera
 echo "[3/8] Application du thème de démarrage Plymouth Arrera..."
@@ -590,12 +746,20 @@ if [ -n "$OTHER_USER" ]; then
     rm -f /etc/sudoers.d/arrera
 fi
 
-# 8. Nettoyage des raccourcis et mise à jour des caches d'environnement
-echo "[8/8] Application des réglages d'environnement Arrera..."
+# 8. Désinstallation de Calamares et des outils Live, application des réglages finaux
+echo "[8/8] Désinstallation de Calamares et des composants Live..."
 rm -f /home/*/Bureau/install-*.desktop /home/*/Desktop/install-*.desktop 2>/dev/null || true
 rm -f /home/*/.config/autostart/install-*.desktop 2>/dev/null || true
 rm -f /etc/xdg/autostart/install-*.desktop 2>/dev/null || true
 rm -f /usr/share/applications/calamares*.desktop 2>/dev/null || true
+
+# Désinstaller proprement les paquets de l'installateur du système cible
+echo "-> Désinstallation des paquets calamares, arrera-installer et cage..."
+rpm -e --nodeps calamares arrera-installer cage 2>/dev/null || true
+
+# Suppression des résidus et caches Calamares
+rm -rf /etc/calamares /usr/share/calamares /usr/lib64/calamares /usr/lib/calamares 2>/dev/null || true
+rm -f /usr/bin/calamares /usr/bin/cage /usr/bin/arrera-installer-kiosk.sh /etc/systemd/system/arrera-kiosk.service 2>/dev/null || true
 
 if command -v dconf >/dev/null 2>&1; then
     dconf update 2>/dev/null || true
