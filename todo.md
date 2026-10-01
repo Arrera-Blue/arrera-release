@@ -40,19 +40,20 @@ L'objectif est d'éliminer le script `setup-dev-env.sh` en exploitant les paquet
 
 ### Phase 3 : Structuration modulaire des 4 Saveurs et 2 Architectures
 
-- [ ] **3.1. Création de l'arborescence modulaire des Kickstarts** :
+- [x] **3.1. Création de l'arborescence modulaire des Kickstarts** :
   ```text
   kickstarts/
   ├── base/
   │   ├── common.ks           # Langue, fuseau horaire, utilisateurs, dépôts, paquets @core
-  │   └── live-kiosk.ks       # Session Kiosque Cage + Calamares, règles Polkit
+  │   ├── installer.ks        # Session Kiosque Cage + Calamares, règles Polkit, scripts post-install
+  │   └── desktop.ks          # Bureau GNOME Arrera (Home, School, Enterprise — exclu sur Server)
   ├── arch/
   │   ├── x86_64.ks           # GRUB2 + Shim (Secure Boot Microsoft, microcodes, ESP /boot/efi 600M)
   │   └── aarch64.ks          # systemd-boot (UEFI natif ARM, firmwares DTB, ESP /boot 1024M)
   └── flavors/
-      ├── home.ks             # arrera-gnome-config, dock Arrera, flatpaks bureau grand public
-      ├── school.ks           # Éducation (GCompris, TuxMath, conteneurs Podman, Arrera Edu Launcher)
-      ├── enterprise.ks       # Intégration domaine / FreeIPA / VPN, bureautique pro, durcissement
+      ├── home.ks             # Flatpaks bureau grand public, multimédia, partage SMB
+      ├── school.ks           # Éducation (GCompris, TuxMath, Scratch, conteneurs Podman)
+      ├── enterprise.ks       # Intégration domaine AD / FreeIPA / VPN, bureautique pro
       └── server.ks           # Minimal headless, Cockpit, conteneurs Podman (sans GUI)
   ```
 - [x] **3.2. Nettoyage des templates actuels** :
@@ -64,12 +65,12 @@ L'objectif est d'éliminer le script `setup-dev-env.sh` en exploitant les paquet
 ### Phase 4 : Évolution de `build_iso.sh` (Multi-Saveurs & Multi-Arch)
 
 - [x] **4.1. Suppression de l'injection obsolète `sed`** (`setup-dev-env.sh`).
-- [ ] **4.2. Prise en charge des arguments dynamiques** :
-  - [ ] Supporter `./build_iso.sh --flavor <home|school|enterprise|server> --arch <x86_64|aarch64>`.
-  - [ ] Assembler à la volée le kickstart final en combinant :
-    `base/common.ks` + `base/live-kiosk.ks` + `arch/<arch>.ks` + `flavors/<flavor>.ks`.
-  - [ ] Nommer l'ISO générée dynamiquement : `arrera-blue-<flavor>-<version>-<arch>.iso`.
-  - [ ] Définir la cible par défaut sur `--flavor home` avec l'architecture de la machine hôte.
+- [x] **4.2. Menu interactif Multi-Saveurs & Multi-Arch** :
+  - [x] Menu interactif guidé pour sélectionner la saveur (`home`, `school`, `enterprise`, `server`).
+  - [x] Sélection de l'architecture (`x86_64`, `aarch64`) avec détection automatique de l'hôte.
+  - [x] Choix entre compilation ISO complète ou assemblage rapide du Kickstart.
+  - [x] Assemblage à la volée (`base/common.ks` + `base/installer.ks` + `base/desktop.ks` + `arch/<arch>.ks` + `flavors/<flavor>.ks`).
+  - [x] Nommage dynamique de l'ISO générée : `arrera-blue-<flavor>-<version>-<arch>.iso`.
 
 ---
 
