@@ -282,6 +282,11 @@ EOF
                 fi
             fi
         fi
+
+        # Restauration du binaire kernel-install réel s'il avait été wrappé
+        if [ -f /usr/bin/kernel-install.real ]; then
+            mv -f /usr/bin/kernel-install.real /usr/bin/kernel-install 2>/dev/null || true
+        fi
         ;;
 
     x86_64|amd64|*)
@@ -308,6 +313,27 @@ GRUB_DEFAULT_EOF
         mkdir -p /boot/grub2
         echo "-> Génération du grub.cfg (/boot/grub2/grub.cfg)..."
         grub2-mkconfig -o /boot/grub2/grub.cfg 2>/dev/null || true
+
+        # Configuration BIOS si le système est en mode BIOS / Legacy
+        if [ ! -d /sys/firmware/efi ]; then
+            echo "-> Système BIOS / Legacy détecté sur x86_64 : finalisation du MBR / BIOS boot..."
+            TARGET_ROOT_DEV_DISK=""
+            if command -v lsblk >/dev/null 2>&1 && [ -n "$TARGET_ROOT_DEV" ]; then
+                PK=$(lsblk -no PKNAME "$TARGET_ROOT_DEV" 2>/dev/null | head -n 1 || true)
+                [ -n "$PK" ] && TARGET_ROOT_DEV_DISK="/dev/$PK"
+            fi
+            if [ -z "$TARGET_ROOT_DEV_DISK" ] && [ -n "$TARGET_ROOT_DEV" ]; then
+                TARGET_ROOT_DEV_DISK=$(echo "$TARGET_ROOT_DEV" | sed -E 's/p?[0-9]+$//')
+            fi
+            if [ -n "$TARGET_ROOT_DEV_DISK" ] && [ -b "$TARGET_ROOT_DEV_DISK" ]; then
+                echo "-> Installation / vérification de GRUB BIOS sur $TARGET_ROOT_DEV_DISK..."
+                if [ -f /usr/bin/grub2-install.bin ]; then
+                    /usr/bin/grub2-install.bin --target=i386-pc --recheck --force "$TARGET_ROOT_DEV_DISK" 2>/dev/null || true
+                else
+                    grub2-install --target=i386-pc --recheck --force "$TARGET_ROOT_DEV_DISK" 2>/dev/null || true
+                fi
+            fi
+        fi
 
         if [ -d /sys/firmware/efi ] || [ -d /boot/efi ] || grep -q '/boot/efi' /etc/fstab 2>/dev/null; then
             echo "-> Système UEFI x86_64 détecté : finalisation de la partition ESP..."
@@ -430,6 +456,14 @@ STUB_EOF
         fi
         ;;
 esac
+
+# Restauration du binaire grub2-install réel s'il avait été wrappé
+if [ -f /usr/bin/grub2-install.bin ]; then
+    mv -f /usr/bin/grub2-install.bin /usr/bin/grub2-install 2>/dev/null || true
+fi
+if [ -f /usr/sbin/grub2-install.bin ]; then
+    mv -f /usr/sbin/grub2-install.bin /usr/sbin/grub2-install 2>/dev/null || true
+fi
 
 sync
 

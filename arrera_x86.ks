@@ -53,10 +53,9 @@ services --enabled=NetworkManager,firewalld,arrera-kiosk --disabled=gdm
 @core
 @hardware-support
 
-# Noyau et démarrage (x86_64 systemd-boot cible + amorçage Live ISO Lorax)
+# Noyau et démarrage (x86_64 GRUB2 + Shim officiel Secure Boot & BIOS Legacy)
 kernel
 dracut-live
-systemd-boot-unsigned
 grub2-efi-x64
 grub2-efi-x64-cdboot
 shim-x64
@@ -814,13 +813,13 @@ efiBootloaderId: "fedora"
 installEFIFallback: true
 CALAMARES_BOOTLOADER_CONF
 
-# Écriture de partition.conf Calamares (ESP sur /boot/efi pour x86_64)
+# Écriture de partition.conf Calamares (ESP sur /boot/efi + partition bios_grub pour x86_64)
 cat > /etc/calamares/modules/partition.conf << 'CALAMARES_PARTITION_CONF'
 # Configuration du module partition pour Arrera Linux x86_64
 ---
 defaultFileSystemType: "ext4"
 availableFileSystemTypes: ["ext4", "btrfs", "xfs"]
-createHybridBootloaderLayout: false
+createHybridBootloaderLayout: true
 defaultPartitionTableType: "gpt"
 efiSystemPartition: "/boot/efi"
 efiSystemPartitionSize: 600M
