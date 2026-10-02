@@ -256,20 +256,30 @@ if [ "$FLAVOR" != "server" ]; then
 fi
 info "  - Saveur       : $KS_FLAVOR"
 
-python3 - << PYTHON_ASSEMBLER_EOF
+KS_ASSEMBLER_FLAVOR="$FLAVOR" \
+KS_ASSEMBLER_ARCH="$ARCH" \
+KS_ASSEMBLER_BASE_COMMON="$KS_BASE_COMMON" \
+KS_ASSEMBLER_BASE_INSTALLER="$KS_BASE_INSTALLER" \
+KS_ASSEMBLER_BASE_DESKTOP="$KS_BASE_DESKTOP" \
+KS_ASSEMBLER_ARCH_KS="$KS_ARCH" \
+KS_ASSEMBLER_FLAVOR_KS="$KS_FLAVOR" \
+KS_ASSEMBLER_TARGET="$TARGET_KS" \
+python3 - << 'PYTHON_ASSEMBLER_EOF'
 import os, sys
 
-source_files = [
-    "$KS_BASE_COMMON",
-    "$KS_BASE_INSTALLER",
-    "$KS_ARCH"
-]
-if "$FLAVOR" != "server":
-    source_files.append("$KS_BASE_DESKTOP")
-source_files.append("$KS_FLAVOR")
-target_ks = "$TARGET_KS"
+flavor = os.environ["KS_ASSEMBLER_FLAVOR"]
+arch = os.environ["KS_ASSEMBLER_ARCH"]
+target_ks = os.environ["KS_ASSEMBLER_TARGET"]
 releasever = "44"
-basearch = "$ARCH"
+
+source_files = [
+    os.environ["KS_ASSEMBLER_BASE_COMMON"],
+    os.environ["KS_ASSEMBLER_BASE_INSTALLER"],
+    os.environ["KS_ASSEMBLER_ARCH_KS"]
+]
+if flavor != "server":
+    source_files.append(os.environ["KS_ASSEMBLER_BASE_DESKTOP"])
+source_files.append(os.environ["KS_ASSEMBLER_FLAVOR_KS"])
 
 commands = []
 packages = []
@@ -322,11 +332,16 @@ for fpath in source_files:
 
 final_lines = []
 final_lines.append("# ==============================================================================\n")
-final_lines.append(f"# Arrera Linux - Kickstart Assemble ($FLAVOR / $ARCH)\n")
+final_lines.append(f"# Arrera Linux - Kickstart Assemble ({flavor} / {arch})\n")
 final_lines.append("# ==============================================================================\n\n")
 
-# Commandes de base
-final_lines.append("".join(commands).strip() + "\n\n")
+# Commandes de base : substituer $releasever et $basearch uniquement dans les
+# directives url/repo (section commands), PAS dans les %post où elles doivent
+# rester littérales pour DNF sur le système cible.
+cmd_block = "".join(commands).strip()
+cmd_block = cmd_block.replace("$releasever", releasever)
+cmd_block = cmd_block.replace("$basearch", arch)
+final_lines.append(cmd_block + "\n\n")
 
 # Ligne unique consolidée des services
 if services_enabled or services_disabled:
@@ -347,14 +362,12 @@ for pkg in packages:
         final_lines.append(pkg)
 final_lines.append("%end\n\n")
 
-# Sections post-installation ordonnées
+# Sections post-installation ordonnées (les variables $releasever/$basearch
+# restent intactes pour être évaluées par DNF au runtime)
 for p in posts:
     final_lines.append(p.strip() + "\n\n")
 
 content = "".join(final_lines)
-# Substitution des variables d'architecture et de version
-content = content.replace("\$releasever", releasever)
-content = content.replace("\$basearch", basearch)
 
 with open(target_ks, "w", encoding="utf-8") as out:
     out.write(content)
