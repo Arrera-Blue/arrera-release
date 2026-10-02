@@ -55,9 +55,14 @@ services --enabled=NetworkManager,firewalld,arrera-kiosk --disabled=gdm
 @core
 @hardware-support
 
-# Noyau et démarrage ARM64 (100% systemd-boot natif sans aucun composant GRUB)
+# Noyau et amorceur Live ISO Lorax (requis pour générer boot.iso et amorcer le média Live sur ARM64)
 kernel
 dracut-live
+grub2-efi-aa64
+grub2-efi-aa64-cdboot
+shim-aa64
+
+# Amorceur pour le système cible installé par Calamares (systemd-boot natif)
 systemd-boot-unsigned
 efibootmgr
 efivar
@@ -751,6 +756,11 @@ rm -f /usr/share/applications/calamares*.desktop 2>/dev/null || true
 # Désinstaller proprement les paquets de l'installateur du système cible
 echo "-> Désinstallation des paquets calamares, arrera-installer et cage..."
 rpm -e --nodeps calamares arrera-installer cage 2>/dev/null || true
+
+# Purge des paquets résiduels d'amorçage Live ISO (grub2, shim) sur ARM64
+echo "-> [ARM64] Purge des paquets d'amorçage Live ISO (grub2, shim)..."
+rpm -e --nodeps grub2-efi-aa64-cdboot grub2-efi-aa64 shim-aa64 grub2-common 2>/dev/null || true
+rm -rf /boot/grub2 /boot/efi/EFI/fedora/grub*.efi /boot/efi/EFI/fedora/shim*.efi 2>/dev/null || true
 
 # Suppression des résidus et caches Calamares
 rm -rf /etc/calamares /usr/share/calamares /usr/lib64/calamares /usr/lib/calamares 2>/dev/null || true

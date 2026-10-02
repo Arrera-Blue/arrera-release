@@ -11,10 +11,16 @@ part /boot/efi --size=1024 --fstype=efi
 part / --size=10240 --fstype=ext4
 
 # --------------------------------------------------------------------------
-# Paquets d'amorçage ARM64 (100% systemd-boot, aucun paquet GRUB)
+# Paquets d'amorçage ARM64
 # --------------------------------------------------------------------------
 %packages --ignoremissing
 
+# Amorceur Live ISO Lorax (obligatoire pour générer le boot.iso UEFI sur ARM64)
+grub2-efi-aa64
+grub2-efi-aa64-cdboot
+shim-aa64
+
+# Amorceur pour le système cible installé par Calamares (systemd-boot natif)
 systemd-boot-unsigned
 efibootmgr
 efivar

@@ -528,6 +528,13 @@ rm -f /usr/share/applications/calamares*.desktop 2>/dev/null || true
 echo "-> Désinstallation des paquets calamares, arrera-installer et cage..."
 rpm -e --nodeps calamares arrera-installer arrera-installer-home arrera-installer-education arrera-installer-enterprise arrera-installer-server cage 2>/dev/null || true
 
+# Sur ARM64, purger les paquets d'amorçage du média Live ISO (grub2/shim) pour conserver un système 100% systemd-boot
+if [ "$TARGET_ARCH" = "aarch64" ] || [ "$TARGET_ARCH" = "arm64" ]; then
+    echo "-> [ARM64] Purge des paquets d'amorçage Live ISO (grub2, shim)..."
+    rpm -e --nodeps grub2-efi-aa64-cdboot grub2-efi-aa64 shim-aa64 grub2-common 2>/dev/null || true
+    rm -rf /boot/grub2 /boot/efi/EFI/fedora/grub*.efi /boot/efi/EFI/fedora/shim*.efi 2>/dev/null || true
+fi
+
 # Suppression des résidus et caches Calamares
 rm -rf /etc/calamares /usr/share/calamares /usr/lib64/calamares /usr/lib/calamares 2>/dev/null || true
 rm -f /usr/bin/calamares /usr/bin/cage /usr/bin/arrera-installer-kiosk.sh /etc/systemd/system/arrera-kiosk.service 2>/dev/null || true
