@@ -869,7 +869,6 @@ sequence:
       - networkcfg
       - hwclock
       - services-systemd
-      - bootloader
       - shellprocess@postinstall
       - umount
   - show:

@@ -282,11 +282,6 @@ EOF
                 fi
             fi
         fi
-
-        # Restauration du binaire kernel-install réel s'il avait été wrappé
-        if [ -f /usr/bin/kernel-install.real ]; then
-            mv -f /usr/bin/kernel-install.real /usr/bin/kernel-install 2>/dev/null || true
-        fi
         ;;
 
     x86_64|amd64|*)
@@ -327,11 +322,7 @@ GRUB_DEFAULT_EOF
             fi
             if [ -n "$TARGET_ROOT_DEV_DISK" ] && [ -b "$TARGET_ROOT_DEV_DISK" ]; then
                 echo "-> Installation / vérification de GRUB BIOS sur $TARGET_ROOT_DEV_DISK..."
-                if [ -f /usr/bin/grub2-install.bin ]; then
-                    /usr/bin/grub2-install.bin --target=i386-pc --recheck --force "$TARGET_ROOT_DEV_DISK" 2>/dev/null || true
-                else
-                    grub2-install --target=i386-pc --recheck --force "$TARGET_ROOT_DEV_DISK" 2>/dev/null || true
-                fi
+                grub2-install --target=i386-pc --recheck --force "$TARGET_ROOT_DEV_DISK" 2>/dev/null || true
             fi
         fi
 
@@ -456,14 +447,6 @@ STUB_EOF
         fi
         ;;
 esac
-
-# Restauration du binaire grub2-install réel s'il avait été wrappé
-if [ -f /usr/bin/grub2-install.bin ]; then
-    mv -f /usr/bin/grub2-install.bin /usr/bin/grub2-install 2>/dev/null || true
-fi
-if [ -f /usr/sbin/grub2-install.bin ]; then
-    mv -f /usr/sbin/grub2-install.bin /usr/sbin/grub2-install 2>/dev/null || true
-fi
 
 sync
 
@@ -621,7 +604,6 @@ sequence:
       - networkcfg
       - hwclock
       - services-systemd
-      - bootloader
       - shellprocess@postinstall
       - umount
   - show:

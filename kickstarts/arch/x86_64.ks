@@ -40,32 +40,6 @@ echo "=== Configuration architecture x86_64 (GRUB2 + Shim) ==="
 mkdir -p /usr/share/arrera-efi
 cp -a /boot/efi/EFI /usr/share/arrera-efi/ 2>/dev/null || true
 
-# Wrapper résilient pour grub2-install afin d'éviter tout blocage de Calamares en mode BIOS
-if [ -f /usr/bin/grub2-install ] && [ ! -f /usr/bin/grub2-install.bin ]; then
-    mv /usr/bin/grub2-install /usr/bin/grub2-install.bin
-    cat > /usr/bin/grub2-install << 'WRAPPER_EOF'
-#!/bin/bash
-if /usr/bin/grub2-install.bin "$@"; then
-    exit 0
-fi
-echo "WARN: grub2-install.bin a échoué ($*), nouvelle tentative en cours..." >&2
-NEW_ARGS=()
-for a in "$@"; do
-    [ "$a" != "--force" ] && NEW_ARGS+=("$a")
-done
-if /usr/bin/grub2-install.bin "${NEW_ARGS[@]}"; then
-    exit 0
-fi
-echo "WARN: grub2-install renvoie 0 pour permettre au script arrera-postinstall.sh de finaliser." >&2
-exit 0
-WRAPPER_EOF
-    chmod +x /usr/bin/grub2-install
-fi
-if [ -f /usr/sbin/grub2-install ] && [ ! -L /usr/sbin/grub2-install ] && [ ! -f /usr/sbin/grub2-install.bin ]; then
-    mv /usr/sbin/grub2-install /usr/sbin/grub2-install.bin
-    ln -sf /usr/bin/grub2-install /usr/sbin/grub2-install
-fi
-
 mkdir -p /etc/calamares/modules
 
 # Écriture de bootloader.conf Calamares (GRUB2 + Shim officiel Secure Boot pour x86_64)
