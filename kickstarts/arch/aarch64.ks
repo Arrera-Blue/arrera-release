@@ -54,6 +54,41 @@ ln -sf /dev/null /etc/kernel/install.d/99-grub-mkconfig.install
 
 mkdir -p /etc/calamares/modules
 
+# Neutralisation du module interne 'bootloader' de Calamares (systemd-boot géré par arrera-postinstall.sh)
+cat > /usr/bin/arrera-calamares-sanitize.sh << 'SANITIZE_EOF'
+#!/bin/bash
+for f in /etc/calamares/settings.conf /etc/calamares/settings-*.conf /usr/share/calamares/settings.conf; do
+    [ -f "$f" ] || continue
+    sed -i -E '/^[[:space:]]*-[[:space:]]*bootloader[[:space:]]*$/d' "$f" 2>/dev/null || true
+done
+exit 0
+SANITIZE_EOF
+chmod +x /usr/bin/arrera-calamares-sanitize.sh
+/usr/bin/arrera-calamares-sanitize.sh
+
+mkdir -p /etc/systemd/system/arrera-kiosk.service.d
+cat > /etc/systemd/system/arrera-kiosk.service.d/10-arrera-no-bootloader.conf << 'DROPIN_EOF'
+[Service]
+ExecStartPre=-/usr/bin/arrera-calamares-sanitize.sh
+DROPIN_EOF
+
+# Wrapper in-place résilient pour kernel-install afin d'éviter tout blocage de Calamares sur ARM64
+for bin in /usr/bin/kernel-install /usr/sbin/kernel-install; do
+    if [ -e "$bin" ] && [ ! -L "$bin" ] && [ ! -f "${bin}.orig" ]; then
+        cp -a "$bin" "${bin}.orig"
+        cat > "$bin" << 'KERNELINSTALL_EOF'
+#!/bin/bash
+if [ -x /usr/bin/kernel-install.orig ]; then
+    /usr/bin/kernel-install.orig "$@" || echo "WARN: kernel-install a échoué ($*) - finalisation par arrera-postinstall.sh" >&2
+elif [ -x /usr/sbin/kernel-install.orig ]; then
+    /usr/sbin/kernel-install.orig "$@" || echo "WARN: kernel-install a échoué ($*) - finalisation par arrera-postinstall.sh" >&2
+fi
+exit 0
+KERNELINSTALL_EOF
+        chmod +x "$bin"
+    fi
+done
+
 # Écriture de bootloader.conf Calamares (systemd-boot natif)
 cat > /etc/calamares/modules/bootloader.conf << 'CALAMARES_BOOTLOADER_CONF'
 # Configuration du module bootloader pour Arrera Linux

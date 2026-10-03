@@ -29,13 +29,13 @@ set -eux
 echo "=== Configuration du Kiosque Live Calamares ==="
 
 # Activation des services pour le média Live (Kiosque Calamares direct sans GNOME)
-systemctl enable NetworkManager
-systemctl enable firewalld
-systemctl enable arrera-kiosk.service
+systemctl enable NetworkManager || true
+systemctl enable firewalld || true
+systemctl enable arrera-kiosk.service || true
 systemctl disable gdm || true
 
 # Cible par défaut pour le Kiosque
-systemctl set-default multi-user.target
+systemctl set-default multi-user.target || true
 
 # Règles Polkit pour la session Live
 mkdir -p /etc/polkit-1/rules.d/
@@ -536,8 +536,16 @@ if [ "$TARGET_ARCH" = "aarch64" ] || [ "$TARGET_ARCH" = "arm64" ]; then
 fi
 
 # Suppression des résidus et caches Calamares
-rm -rf /etc/calamares /usr/share/calamares /usr/lib64/calamares /usr/lib/calamares 2>/dev/null || true
 rm -f /usr/bin/calamares /usr/bin/cage /usr/bin/arrera-installer-kiosk.sh /etc/systemd/system/arrera-kiosk.service 2>/dev/null || true
+rm -f /usr/bin/arrera-calamares-sanitize.sh 2>/dev/null || true
+rm -rf /etc/systemd/system/arrera-kiosk.service.d 2>/dev/null || true
+
+# Restaurer les binaires originaux sur le système installé
+for bin in /usr/bin/grub2-mkconfig /usr/sbin/grub2-mkconfig /usr/bin/grub2-install /usr/sbin/grub2-install /usr/bin/kernel-install /usr/sbin/kernel-install; do
+    if [ -f "${bin}.orig" ]; then
+        mv -f "${bin}.orig" "$bin" 2>/dev/null || true
+    fi
+done
 
 if command -v dconf >/dev/null 2>&1; then
     dconf update 2>/dev/null || true

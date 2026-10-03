@@ -755,7 +755,7 @@ rm -f /usr/share/applications/calamares*.desktop 2>/dev/null || true
 
 # Désinstaller proprement les paquets de l'installateur du système cible
 echo "-> Désinstallation des paquets calamares, arrera-installer et cage..."
-rpm -e --nodeps calamares arrera-installer cage 2>/dev/null || true
+rpm -e --nodeps calamares arrera-installer arrera-installer-home arrera-installer-education arrera-installer-enterprise arrera-installer-server cage 2>/dev/null || true
 
 # Purge des paquets résiduels d'amorçage Live ISO (grub2, shim) sur ARM64
 echo "-> [ARM64] Purge des paquets d'amorçage Live ISO (grub2, shim)..."
@@ -763,8 +763,16 @@ rpm -e --nodeps grub2-efi-aa64-cdboot grub2-efi-aa64 shim-aa64 grub2-common 2>/d
 rm -rf /boot/grub2 /boot/efi/EFI/fedora/grub*.efi /boot/efi/EFI/fedora/shim*.efi 2>/dev/null || true
 
 # Suppression des résidus et caches Calamares
-rm -rf /etc/calamares /usr/share/calamares /usr/lib64/calamares /usr/lib/calamares 2>/dev/null || true
 rm -f /usr/bin/calamares /usr/bin/cage /usr/bin/arrera-installer-kiosk.sh /etc/systemd/system/arrera-kiosk.service 2>/dev/null || true
+rm -f /usr/bin/arrera-calamares-sanitize.sh 2>/dev/null || true
+rm -rf /etc/systemd/system/arrera-kiosk.service.d 2>/dev/null || true
+
+# Restaurer les binaires originaux sur le système installé
+for bin in /usr/bin/grub2-mkconfig /usr/sbin/grub2-mkconfig /usr/bin/grub2-install /usr/sbin/grub2-install /usr/bin/kernel-install /usr/sbin/kernel-install; do
+    if [ -f "${bin}.orig" ]; then
+        mv -f "${bin}.orig" "$bin" 2>/dev/null || true
+    fi
+done
 
 if command -v dconf >/dev/null 2>&1; then
     dconf update 2>/dev/null || true
@@ -784,6 +792,41 @@ exit 0
 POSTINSTALL_EOF
 
 chmod +x /usr/bin/arrera-postinstall.sh
+
+# Neutralisation du module interne 'bootloader' de Calamares (systemd-boot géré par arrera-postinstall.sh)
+cat > /usr/bin/arrera-calamares-sanitize.sh << 'SANITIZE_EOF'
+#!/bin/bash
+for f in /etc/calamares/settings.conf /etc/calamares/settings-*.conf /usr/share/calamares/settings.conf; do
+    [ -f "$f" ] || continue
+    sed -i -E '/^[[:space:]]*-[[:space:]]*bootloader[[:space:]]*$/d' "$f" 2>/dev/null || true
+done
+exit 0
+SANITIZE_EOF
+chmod +x /usr/bin/arrera-calamares-sanitize.sh
+/usr/bin/arrera-calamares-sanitize.sh
+
+mkdir -p /etc/systemd/system/arrera-kiosk.service.d
+cat > /etc/systemd/system/arrera-kiosk.service.d/10-arrera-no-bootloader.conf << 'DROPIN_EOF'
+[Service]
+ExecStartPre=-/usr/bin/arrera-calamares-sanitize.sh
+DROPIN_EOF
+
+# Wrapper in-place résilient pour kernel-install afin d'éviter tout blocage de Calamares sur ARM64
+for bin in /usr/bin/kernel-install /usr/sbin/kernel-install; do
+    if [ -e "$bin" ] && [ ! -L "$bin" ] && [ ! -f "${bin}.orig" ]; then
+        cp -a "$bin" "${bin}.orig"
+        cat > "$bin" << 'KERNELINSTALL_EOF'
+#!/bin/bash
+if [ -x /usr/bin/kernel-install.orig ]; then
+    /usr/bin/kernel-install.orig "$@" || echo "WARN: kernel-install a échoué ($*) - finalisation par arrera-postinstall.sh" >&2
+elif [ -x /usr/sbin/kernel-install.orig ]; then
+    /usr/sbin/kernel-install.orig "$@" || echo "WARN: kernel-install a échoué ($*) - finalisation par arrera-postinstall.sh" >&2
+fi
+exit 0
+KERNELINSTALL_EOF
+        chmod +x "$bin"
+    fi
+done
 
 # 2. Écriture de la configuration du module shellprocess Calamares (sans variable bash inline)
 mkdir -p /etc/calamares/modules
