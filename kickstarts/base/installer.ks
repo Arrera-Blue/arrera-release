@@ -128,13 +128,74 @@ else
     ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf 2>/dev/null || true
 fi
 
-# 2. Nettoyage et configuration du chargeur d'amorçage
+# 2. Application du thème Plymouth Arrera et régénération de l'initramfs
+echo "[2/8] Application du thème de démarrage Plymouth Arrera..."
+mkdir -p /etc/dracut.conf.d
+cat > /etc/dracut.conf.d/plymouth.conf << 'DRACUT_EOF'
+add_dracutmodules+=" plymouth "
+DRACUT_EOF
+
+mkdir -p /etc/plymouth
+cat > /etc/plymouth/plymouthd.conf << 'PLYMOUTH_EOF'
+[Daemon]
+Theme=arrera
+ShowDelay=0
+DeviceTimeout=8
+PLYMOUTH_EOF
+
+if [ -d /usr/share/plymouth/themes/arrera ]; then
+    ln -sf /usr/share/plymouth/themes/arrera/arrera.plymouth /usr/share/plymouth/themes/default.plymouth 2>/dev/null || true
+fi
+
+if command -v plymouth-set-default-theme >/dev/null 2>&1; then
+    plymouth-set-default-theme arrera 2>/dev/null || true
+fi
+
+# Identifier le dernier noyau installé et extraire précisément sa version (KVER)
+LATEST_KERNEL=$(ls -v /usr/lib/modules/*/vmlinuz /boot/vmlinuz-* 2>/dev/null | grep -v 'rescue' | tail -n 1 || true)
+KVER=""
+if [[ "$LATEST_KERNEL" =~ /usr/lib/modules/([^/]+)/vmlinuz ]]; then
+    KVER="${BASH_REMATCH[1]}"
+elif [[ "$LATEST_KERNEL" =~ /boot/vmlinuz-(.+) ]]; then
+    KVER="${BASH_REMATCH[1]}"
+fi
+[ -z "$KVER" ] && KVER=$(uname -r 2>/dev/null || true)
+[ -n "$LATEST_KERNEL" ] && echo "-> Dernier noyau détecté : $LATEST_KERNEL (version: $KVER)"
+
+if command -v dracut >/dev/null 2>&1; then
+    echo "-> Régénération complète de l'initramfs avec Dracut et le thème Arrera..."
+    dracut --regenerate-all --force --add plymouth 2>/dev/null || {
+        if [ -n "$KVER" ]; then
+            dracut -f --add plymouth "/boot/initramfs-${KVER}.img" "$KVER" 2>/dev/null || true
+        fi
+    }
+fi
+
+# Détecter l'initramfs généré
+LATEST_INITRD=""
+if [ -n "$KVER" ] && [ -f "/boot/initramfs-${KVER}.img" ]; then
+    LATEST_INITRD="/boot/initramfs-${KVER}.img"
+fi
+if [ -z "$LATEST_INITRD" ] || [ ! -f "$LATEST_INITRD" ]; then
+    for f in /boot/initramfs-*.img; do
+        [ -f "$f" ] || continue
+        case "$f" in *rescue*) continue ;; esac
+        LATEST_INITRD="$f"
+    done
+fi
+[ -n "$LATEST_INITRD" ] && echo "-> Initramfs détecté : $LATEST_INITRD"
+
+# 3. Nettoyage et configuration du chargeur d'amorçage
 TARGET_ARCH="$(uname -m)"
-echo "[2/8] Configuration du chargeur d'amorçage pour architecture : $TARGET_ARCH..."
+echo "[3/8] Configuration du chargeur d'amorçage pour architecture : $TARGET_ARCH..."
 
 CURRENT_MACHINE_ID=$(cat /etc/machine-id 2>/dev/null || true)
+if [ -z "$CURRENT_MACHINE_ID" ] || [ "$CURRENT_MACHINE_ID" = "uninitialized" ]; then
+    systemd-machine-id-setup 2>/dev/null || true
+    CURRENT_MACHINE_ID=$(cat /etc/machine-id 2>/dev/null || true)
+fi
 
-# Nettoyer les fichiers rescue obsolètes issus de l'ISO Live
+# Nettoyer les fichiers rescue obsolètes issus de l'ISO Live (machine-id différent)
 if [ -n "$CURRENT_MACHINE_ID" ]; then
     for f in /boot/*rescue*; do
         [ -f "$f" ] || continue
@@ -143,8 +204,13 @@ if [ -n "$CURRENT_MACHINE_ID" ]; then
             rm -f "$f"
         fi
     done
+    for conf in /boot/loader/entries/*rescue*.conf; do
+        [ -f "$conf" ] || continue
+        if ! grep -q "$CURRENT_MACHINE_ID" <<< "$(basename "$conf")"; then
+            rm -f "$conf"
+        fi
+    done
 fi
-rm -f /boot/loader/entries/*rescue*.conf 2>/dev/null || true
 
 # Restaurer os-release Arrera si la mise à jour fedora-release l'a écrasé
 for f_osrel in /usr/share/arrera-branding*/os-release; do
@@ -155,24 +221,45 @@ for f_osrel in /usr/share/arrera-branding*/os-release; do
     fi
 done
 
-# Identifier le dernier noyau installé
-LATEST_KERNEL=$(ls -v /usr/lib/modules/*/vmlinuz /boot/vmlinuz-* 2>/dev/null | grep -v 'rescue' | tail -n 1 || true)
-[ -n "$LATEST_KERNEL" ] && echo "-> Dernier noyau détecté : $LATEST_KERNEL"
-
 # Ligne de commande silencieuse officielle Arrera
 SILENT_CMDLINE="rhgb quiet splash loglevel=3 rd.udev.log_priority=3 systemd.show_status=false vt.global_cursor_default=0"
 
-# Détermination de l'UUID de la racine
+# Détermination de l'UUID et du périphérique de la racine
 TARGET_ROOT_UUID=""
+ROOT_PART_DEV=""
 if [ -f /etc/fstab ]; then
-    TARGET_ROOT_UUID=$(awk '$2 == "/" && $1 ~ /^UUID=/ {sub(/^UUID=/, "", $1); print $1}' /etc/fstab | head -n 1)
+    ROOT_FSTAB_LINE=$(awk '$2 == "/" {print $1}' /etc/fstab | head -n 1)
+    if [[ "$ROOT_FSTAB_LINE" =~ ^UUID=(.*) ]]; then
+        TARGET_ROOT_UUID="${BASH_REMATCH[1]}"
+        ROOT_PART_DEV=$(findfs UUID="$TARGET_ROOT_UUID" 2>/dev/null || true)
+    elif [ -b "$ROOT_FSTAB_LINE" ]; then
+        ROOT_PART_DEV="$ROOT_FSTAB_LINE"
+        TARGET_ROOT_UUID=$(blkid -s UUID -o value "$ROOT_PART_DEV" 2>/dev/null || true)
+    fi
 fi
 if [ -z "$TARGET_ROOT_UUID" ]; then
-    TARGET_ROOT_DEV=$(findmnt -n -o SOURCE / 2>/dev/null || df / 2>/dev/null | tail -1 | awk '{print $1}')
-    TARGET_ROOT_UUID=$(blkid -s UUID -o value "$TARGET_ROOT_DEV" 2>/dev/null || true)
+    TARGET_ROOT_DEV=$(findmnt -n -o SOURCE / 2>/dev/null || true)
+    if [ -b "$TARGET_ROOT_DEV" ]; then
+        ROOT_PART_DEV="$TARGET_ROOT_DEV"
+        TARGET_ROOT_UUID=$(blkid -s UUID -o value "$TARGET_ROOT_DEV" 2>/dev/null || true)
+    fi
+fi
+if [ -z "$TARGET_ROOT_UUID" ]; then
+    for p in /dev/vda* /dev/sda* /dev/nvme0n1p*; do
+        [ -b "$p" ] || continue
+        case "$p" in *[0-9]) ;; *) continue ;; esac
+        FSTYPE=$(blkid -s TYPE -o value "$p" 2>/dev/null || true)
+        case "$FSTYPE" in
+            ext4|btrfs|xfs)
+                TARGET_ROOT_UUID=$(blkid -s UUID -o value "$p" 2>/dev/null || true)
+                ROOT_PART_DEV="$p"
+                [ -n "$TARGET_ROOT_UUID" ] && break
+                ;;
+        esac
+    done
 fi
 ROOT_PARAM="root=UUID=${TARGET_ROOT_UUID}"
-echo "-> Racine cible UUID: $TARGET_ROOT_UUID"
+echo "-> Racine cible UUID: $TARGET_ROOT_UUID (dev: $ROOT_PART_DEV)"
 
 case "$TARGET_ARCH" in
     aarch64|arm64)
@@ -180,6 +267,8 @@ case "$TARGET_ARCH" in
         # CAS ARM64 : systemd-boot (UEFI natif sans GRUB)
         # ==============================================================================
         echo "-> [ARM64] Configuration de systemd-boot et enregistrement des noyaux..."
+        # ARM64 : Pas de rescue pour systemd-boot (uniquement le noyau standard)
+        rm -f /boot/*rescue* /boot/loader/entries/*rescue*.conf 2>/dev/null || true
         mkdir -p /etc/kernel
         echo "${ROOT_PARAM} ro ${SILENT_CMDLINE}" > /etc/kernel/cmdline
 
@@ -220,30 +309,36 @@ EOF
         # Copie physique garantie du dernier noyau et initramfs sur la partition ESP
         # (Indispensable car systemd-boot ne sait lire que la partition ESP FAT32)
         if [ -n "$LATEST_KERNEL" ] && [ -f "$LATEST_KERNEL" ]; then
-            KVER=$(basename "$LATEST_KERNEL" | sed 's/vmlinuz-//')
             echo "-> Copie du noyau $KVER sur l'ESP ($ESP_PATH)..."
             cp -f "$LATEST_KERNEL" "$ESP_PATH/vmlinuz-$KVER" 2>/dev/null || true
             cp -f "$LATEST_KERNEL" "$ESP_PATH/vmlinuz" 2>/dev/null || true
 
-            LATEST_INITRD=""
-            for img in "/boot/initramfs-${KVER}.img" "/boot/initramfs-*.img"; do
-                [ -f "$img" ] || continue
-                case "$img" in *rescue*) continue ;; esac
-                LATEST_INITRD="$img"
-                break
-            done
             if [ -n "$LATEST_INITRD" ] && [ -f "$LATEST_INITRD" ]; then
                 echo "-> Copie de l'initramfs sur l'ESP ($ESP_PATH)..."
                 cp -f "$LATEST_INITRD" "$ESP_PATH/initramfs-${KVER}.img" 2>/dev/null || true
                 cp -f "$LATEST_INITRD" "$ESP_PATH/initramfs.img" 2>/dev/null || true
+            else
+                echo "-> AVERTISSEMENT : Aucun initramfs trouvé dans /boot !"
+            fi
+
+            # Déterminer les chemins relatifs sur l'ESP pour l'entrée BLS
+            INITRD_REL="/initramfs-${KVER}.img"
+            if [ ! -f "$ESP_PATH/initramfs-${KVER}.img" ] && [ -f "$ESP_PATH/initramfs.img" ]; then
+                INITRD_REL="/initramfs.img"
+            fi
+
+            KERNEL_REL="/vmlinuz-${KVER}"
+            if [ ! -f "$ESP_PATH/vmlinuz-${KVER}" ] && [ -f "$ESP_PATH/vmlinuz" ]; then
+                KERNEL_REL="/vmlinuz"
             fi
 
             # Écriture de l'entrée BLS principale directe et infaillible
+            echo "-> Écriture de l'entrée systemd-boot arrera.conf (linux: $KERNEL_REL, initrd: $INITRD_REL)..."
             cat > "$ESP_PATH/loader/entries/arrera.conf" << ENTRY_EOF
 title Arrera Blue 2026
 version ${KVER}
-linux /vmlinuz-${KVER}
-initrd /initramfs-${KVER}.img
+linux ${KERNEL_REL}
+initrd ${INITRD_REL}
 options ${ROOT_PARAM} ro ${SILENT_CMDLINE}
 ENTRY_EOF
         fi
@@ -321,12 +416,51 @@ GRUB_DEFAULT=0
 GRUB_DISABLE_SUBMENU=true
 GRUB_TERMINAL_OUTPUT="console"
 GRUB_CMDLINE_LINUX="rhgb quiet splash loglevel=3 rd.udev.log_priority=3 systemd.show_status=false vt.global_cursor_default=0"
-GRUB_DISABLE_RECOVERY=true
+GRUB_DISABLE_RECOVERY=false
 GRUB_ENABLE_BLSCFG=true
 GRUB_DEFAULT_KEYMAP="fr"
 GRUB_THEME=""
 GRUB_BACKGROUND=""
 GRUB_DEFAULT_EOF
+
+        # Configuration et génération du noyau de secours (rescue) Fedora officiel pour x86_64
+        echo "-> [x86_64] Configuration du noyau de secours (rescue)..."
+        mkdir -p /etc/dracut.conf.d
+        echo 'dracut_rescue_image="yes"' > /etc/dracut.conf.d/02-rescue.conf
+
+        if [ -n "$KVER" ] && [ -n "$LATEST_KERNEL" ] && [ -n "$CURRENT_MACHINE_ID" ]; then
+            RESCUE_VMLINUZ="/boot/vmlinuz-0-rescue-${CURRENT_MACHINE_ID}"
+            RESCUE_INITRD="/boot/initramfs-0-rescue-${CURRENT_MACHINE_ID}.img"
+            RESCUE_BLS="/boot/loader/entries/${CURRENT_MACHINE_ID}-0-rescue.conf"
+
+            if [ ! -f "$RESCUE_VMLINUZ" ] || [ ! -f "$RESCUE_INITRD" ]; then
+                echo "-> Génération du rescue Fedora pour la machine $CURRENT_MACHINE_ID..."
+                if [ -x /usr/lib/kernel/install.d/51-dracut-rescue.install ]; then
+                    /usr/lib/kernel/install.d/51-dracut-rescue.install add "$KVER" "/boot" "$LATEST_KERNEL" 2>/dev/null || true
+                elif [ -x /usr/lib/kernel/install.d/50-dracut-rescue.install ]; then
+                    /usr/lib/kernel/install.d/50-dracut-rescue.install add "$KVER" "/boot" "$LATEST_KERNEL" 2>/dev/null || true
+                fi
+
+                if [ ! -f "$RESCUE_VMLINUZ" ]; then
+                    cp -f "$LATEST_KERNEL" "$RESCUE_VMLINUZ" 2>/dev/null || true
+                fi
+                if [ ! -f "$RESCUE_INITRD" ] && command -v dracut >/dev/null 2>&1; then
+                    dracut -f --no-hostonly -a "rescue" --kver "$KVER" "$RESCUE_INITRD" 2>/dev/null || true
+                fi
+            fi
+
+            if [ -f "$RESCUE_VMLINUZ" ] && [ -f "$RESCUE_INITRD" ] && [ ! -f "$RESCUE_BLS" ]; then
+                mkdir -p /boot/loader/entries
+                cat > "$RESCUE_BLS" << RESCUE_BLS_EOF
+title Arrera Blue 2026 (Rescue)
+version 0-rescue-${CURRENT_MACHINE_ID}
+machine-id ${CURRENT_MACHINE_ID}
+linux /vmlinuz-0-rescue-${CURRENT_MACHINE_ID}
+initrd /initramfs-0-rescue-${CURRENT_MACHINE_ID}.img
+options ${ROOT_PARAM} ro ${SILENT_CMDLINE}
+RESCUE_BLS_EOF
+            fi
+        fi
 
         # Déterminer si /boot est sur une partition séparée
         IS_SEPARATE_BOOT=0
@@ -406,13 +540,25 @@ GRUB_DEFAULT_EOF
         # SÉCURITÉ ABSOLUE : Si /boot/grub2/grub.cfg est vide ou manquant, générer le grub.cfg autonome garanti
         if [ ! -s /boot/grub2/grub.cfg ]; then
             echo "-> AVERTISSEMENT : grub.cfg vide, écriture du grub.cfg autonome garanti..."
-            KNAME=$(basename "$LATEST_KERNEL" 2>/dev/null || echo "vmlinuz")
-            INAME="initramfs-${KNAME#vmlinuz-}.img"
-            [ -f "/boot/$INAME" ] || INAME=$(ls -v /boot/initramfs-*.img 2>/dev/null | grep -v rescue | tail -n 1 | xargs basename 2>/dev/null || echo "initramfs.img")
+            KNAME="vmlinuz-$KVER"
+            [ -f "/boot/$KNAME" ] || KNAME=$(basename "$LATEST_KERNEL" 2>/dev/null || echo "vmlinuz")
+            INAME="initramfs-${KVER}.img"
+            [ -f "/boot/$INAME" ] || [ -z "$LATEST_INITRD" ] || INAME=$(basename "$LATEST_INITRD")
 
             cat > /boot/grub2/grub.cfg << GRUBCFG_EOF
 set default="0"
 set timeout=2
+set pager=0
+
+function load_video {
+  insmod all_video
+  insmod efi_gop
+  insmod efi_uga
+  insmod video_bochs
+  insmod video_cirrus
+  insmod gfxterm
+  set gfxpayload=keep
+}
 
 insmod part_gpt
 insmod part_msdos
@@ -428,11 +574,28 @@ insmod blscfg
 blscfg
 
 menuentry 'Arrera Blue 2026' {
+    load_video
     search --no-floppy --fs-uuid --set=root ${TARGET_ROOT_UUID}
     linux ${KERNEL_PREFIX}/${KNAME} root=UUID=${TARGET_ROOT_UUID} ro ${SILENT_CMDLINE}
     initrd ${KERNEL_PREFIX}/${INAME}
 }
 GRUBCFG_EOF
+            if [ -n "$CURRENT_MACHINE_ID" ] && [ -f "/boot/vmlinuz-0-rescue-${CURRENT_MACHINE_ID}" ]; then
+                cat >> /boot/grub2/grub.cfg << RESCUE_ENTRY_EOF
+
+menuentry 'Arrera Blue 2026 (Rescue)' {
+    load_video
+    search --no-floppy --fs-uuid --set=root ${TARGET_ROOT_UUID}
+    linux ${KERNEL_PREFIX}/vmlinuz-0-rescue-${CURRENT_MACHINE_ID} root=UUID=${TARGET_ROOT_UUID} ro
+    initrd ${KERNEL_PREFIX}/initramfs-0-rescue-${CURRENT_MACHINE_ID}.img
+}
+RESCUE_ENTRY_EOF
+            fi
+        fi
+
+        # Garantir que la fonction load_video est toujours présente dans /boot/grub2/grub.cfg
+        if [ -f /boot/grub2/grub.cfg ] && ! grep -q 'function load_video' /boot/grub2/grub.cfg; then
+            sed -i '1i function load_video { insmod all_video; insmod efi_gop; insmod efi_uga; insmod gfxterm; set gfxpayload=keep; }\nset pager=0' /boot/grub2/grub.cfg
         fi
 
         # Configuration BIOS si le système est en mode BIOS / Legacy
@@ -456,9 +619,13 @@ GRUBCFG_EOF
             done
         fi
 
-        if [ ! -d /sys/firmware/efi ] && [ -n "$TARGET_DISK" ] && [ -b "$TARGET_DISK" ]; then
-            echo "-> Système BIOS / Legacy détecté : installation de GRUB BIOS sur $TARGET_DISK..."
-            grub2-install --target=i386-pc --recheck --force "$TARGET_DISK" 2>/dev/null || true
+        # Installation de GRUB BIOS (i386-pc) pour garantir le démarrage en mode BIOS / Legacy (MBR)
+        if [ -n "$TARGET_DISK" ] && [ -b "$TARGET_DISK" ]; then
+            echo "-> Installation de GRUB BIOS (i386-pc) sur $TARGET_DISK..."
+            GRUB_INSTALL_BIN="grub2-install"
+            [ -x /usr/sbin/grub2-install.orig ] && GRUB_INSTALL_BIN="/usr/sbin/grub2-install.orig"
+            [ -x /usr/bin/grub2-install.orig ] && GRUB_INSTALL_BIN="/usr/bin/grub2-install.orig"
+            $GRUB_INSTALL_BIN --target=i386-pc --recheck --force "$TARGET_DISK" 2>/dev/null || true
         fi
 
         # Configuration UEFI si UEFI détecté ou si /boot/efi est présent dans fstab
@@ -518,7 +685,27 @@ GRUBCFG_EOF
             # Écriture du STUB GRUB EFI officiel et ultra-robuste
             # NE JAMAIS METTRE 'export $prefix' (syntax error GRUB2) : utiliser 'export prefix' !
             cat > /boot/efi/EFI/fedora/grub.cfg << STUB_EOF
-search --no-floppy --fs-uuid --set=dev ${BOOT_UUID}
+set pager=0
+function load_video {
+  insmod all_video
+  insmod efi_gop
+  insmod efi_uga
+  insmod video_bochs
+  insmod video_cirrus
+  insmod gfxterm
+  set gfxpayload=keep
+}
+
+insmod part_gpt
+insmod part_msdos
+insmod ext2
+insmod btrfs
+insmod xfs
+insmod fat
+
+if [ -n "${BOOT_UUID}" ]; then
+    search --no-floppy --fs-uuid --set=dev ${BOOT_UUID}
+fi
 if [ -z "\$dev" ]; then
     search --no-floppy --file --set=dev ${GRUB_RELPATH}/grub.cfg
 fi
@@ -528,9 +715,39 @@ fi
 if [ -z "\$dev" ]; then
     search --no-floppy --file --set=dev /grub2/grub.cfg
 fi
-set prefix=(\$dev)${GRUB_RELPATH}
-export prefix
-configfile \$prefix/grub.cfg
+if [ -z "\$dev" ]; then
+    search --no-floppy --file --set=dev /@/boot/grub2/grub.cfg
+fi
+if [ -z "\$dev" ]; then
+    search --no-floppy --file --set=dev /root/boot/grub2/grub.cfg
+fi
+
+if [ -n "\$dev" ]; then
+    if [ -f "(\$dev)${GRUB_RELPATH}/grub.cfg" ]; then
+        set prefix=(\$dev)${GRUB_RELPATH}
+    elif [ -f "(\$dev)/boot/grub2/grub.cfg" ]; then
+        set prefix=(\$dev)/boot/grub2
+    elif [ -f "(\$dev)/grub2/grub.cfg" ]; then
+        set prefix=(\$dev)/grub2
+    elif [ -f "(\$dev)/@/boot/grub2/grub.cfg" ]; then
+        set prefix=(\$dev)/@/boot/grub2
+    elif [ -f "(\$dev)/root/boot/grub2/grub.cfg" ]; then
+        set prefix=(\$dev)/root/boot/grub2
+    fi
+    export prefix
+    configfile \$prefix/grub.cfg
+fi
+
+menuentry 'Arrera Blue 2026' {
+    load_video
+    if [ -n "${BOOT_UUID}" ]; then
+        search --no-floppy --fs-uuid --set=root ${BOOT_UUID}
+    else
+        search --no-floppy --file --set=root ${KERNEL_PREFIX}/${KNAME}
+    fi
+    linux ${KERNEL_PREFIX}/${KNAME} root=UUID=${TARGET_ROOT_UUID} ro ${SILENT_CMDLINE}
+    initrd ${KERNEL_PREFIX}/${INAME}
+}
 STUB_EOF
 
             # Copie vers le chemin de fallback universel
@@ -577,39 +794,6 @@ STUB_EOF
 esac
 
 sync
-
-# 3. Application du thème Plymouth Arrera
-echo "[3/8] Application du thème de démarrage Plymouth Arrera..."
-mkdir -p /etc/dracut.conf.d
-cat > /etc/dracut.conf.d/plymouth.conf << 'DRACUT_EOF'
-add_dracutmodules+=" plymouth "
-DRACUT_EOF
-
-mkdir -p /etc/plymouth
-cat > /etc/plymouth/plymouthd.conf << 'PLYMOUTH_EOF'
-[Daemon]
-Theme=arrera
-ShowDelay=0
-DeviceTimeout=8
-PLYMOUTH_EOF
-
-if [ -d /usr/share/plymouth/themes/arrera ]; then
-    ln -sf /usr/share/plymouth/themes/arrera/arrera.plymouth /usr/share/plymouth/themes/default.plymouth 2>/dev/null || true
-fi
-
-if command -v plymouth-set-default-theme >/dev/null 2>&1; then
-    plymouth-set-default-theme arrera 2>/dev/null || true
-fi
-
-if command -v dracut >/dev/null 2>&1; then
-    echo "-> Régénération complète de l'initramfs avec Dracut et le thème Arrera..."
-    dracut --regenerate-all --force --add plymouth 2>/dev/null || {
-        if [ -n "$LATEST_KERNEL" ]; then
-            KVER=$(basename "$LATEST_KERNEL" | sed 's/vmlinuz-//')
-            dracut -f --add plymouth "/boot/initramfs-${KVER}.img" "$KVER" 2>/dev/null || true
-        fi
-    }
-fi
 
 # 4. Configuration de la cible du système installé (Graphique si GDM présent, Headless sinon)
 echo "[4/8] Configuration de la cible d'amorçage..."
