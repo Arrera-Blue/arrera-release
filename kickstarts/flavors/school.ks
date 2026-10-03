@@ -33,7 +33,13 @@ container-selinux
 %post --log=/root/arrera-flavor-school-post.log
 set -eux
 
-echo "=== Configuration de la saveur School ==="
+# Configuration et activation de l'installateur Calamares pour l'Édition Éducation
+echo "Configuration de l'installateur Calamares pour l'Édition Éducation..."
+if [ -f /etc/calamares/settings-education.conf ]; then
+    cp -f /etc/calamares/settings-education.conf /etc/calamares/settings.conf
+elif [ -f /etc/calamares/settings.conf ]; then
+    sed -i 's/^branding:.*/branding: arrera-education/' /etc/calamares/settings.conf
+fi
 
 # Configuration Flathub pour les applications éducatives complémentaires
 if command -v flatpak &>/dev/null; then

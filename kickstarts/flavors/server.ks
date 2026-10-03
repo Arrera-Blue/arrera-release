@@ -52,7 +52,13 @@ logrotate
 %post --log=/root/arrera-flavor-server-post.log
 set -eux
 
-echo "=== Configuration de la saveur Serveur ==="
+# Configuration et activation de l'installateur Calamares pour l'Édition Serveur
+echo "Configuration de l'installateur Calamares pour l'Édition Serveur..."
+if [ -f /etc/calamares/settings-server.conf ]; then
+    cp -f /etc/calamares/settings-server.conf /etc/calamares/settings.conf
+elif [ -f /etc/calamares/settings.conf ]; then
+    sed -i 's/^branding:.*/branding: arrera-server/' /etc/calamares/settings.conf
+fi
 
 # Forcer le mode console / headless
 systemctl set-default multi-user.target 2>/dev/null || true

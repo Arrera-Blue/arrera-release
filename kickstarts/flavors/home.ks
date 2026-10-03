@@ -31,7 +31,13 @@ cifs-utils
 %post --log=/root/arrera-flavor-home-post.log
 set -eux
 
-echo "=== Configuration de la saveur Home ==="
+# Configuration et activation de l'installateur Calamares pour l'Édition Home
+echo "Configuration de l'installateur Calamares pour l'Édition Home..."
+if [ -f /etc/calamares/settings-home.conf ]; then
+    cp -f /etc/calamares/settings-home.conf /etc/calamares/settings.conf
+elif [ -f /etc/calamares/settings.conf ]; then
+    sed -i 's/^branding:.*/branding: arrera-home/' /etc/calamares/settings.conf
+fi
 
 # Configuration Flathub et installation des Flatpaks bureautiques recommandés
 if command -v flatpak &>/dev/null; then

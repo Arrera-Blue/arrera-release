@@ -45,7 +45,13 @@ pcsc-lite
 %post --log=/root/arrera-flavor-enterprise-post.log
 set -eux
 
-echo "=== Configuration de la saveur Entreprise ==="
+# Configuration et activation de l'installateur Calamares pour l'Édition Entreprise
+echo "Configuration de l'installateur Calamares pour l'Édition Entreprise..."
+if [ -f /etc/calamares/settings-enterprise.conf ]; then
+    cp -f /etc/calamares/settings-enterprise.conf /etc/calamares/settings.conf
+elif [ -f /etc/calamares/settings.conf ]; then
+    sed -i 's/^branding:.*/branding: arrera-enterprise/' /etc/calamares/settings.conf
+fi
 
 # Activation des services de cartes à puce / jetons de sécurité
 systemctl enable pcscd 2>/dev/null || true

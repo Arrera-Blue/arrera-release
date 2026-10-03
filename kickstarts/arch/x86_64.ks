@@ -54,6 +54,17 @@ for f in /etc/calamares/settings.conf /etc/calamares/settings-*.conf /usr/share/
     [ -f "$f" ] || continue
     sed -i -E '/^[[:space:]]*-[[:space:]]*bootloader[[:space:]]*$/d' "$f" 2>/dev/null || true
 done
+
+# Configuration dynamique de la table de partition selon le mode de démarrage du Live :
+# UEFI -> gpt | BIOS Legacy -> msdos (MBR standard avec MBR-gap pour GRUB i386-pc)
+for pconf in /etc/calamares/modules/partition.conf /etc/calamares/modules/partition-*.conf /usr/share/calamares/modules/partition.conf; do
+    [ -f "$pconf" ] || continue
+    if [ -d /sys/firmware/efi ]; then
+        sed -i -E 's/^[[:space:]]*defaultPartitionTableType:.*/defaultPartitionTableType: "gpt"/' "$pconf" 2>/dev/null || true
+    else
+        sed -i -E 's/^[[:space:]]*defaultPartitionTableType:.*/defaultPartitionTableType: "msdos"/' "$pconf" 2>/dev/null || true
+    fi
+done
 exit 0
 SANITIZE_EOF
 chmod +x /usr/bin/arrera-calamares-sanitize.sh
@@ -123,14 +134,12 @@ efiBootloaderId: "fedora"
 installEFIFallback: true
 CALAMARES_BOOTLOADER_CONF
 
-# Écriture de partition.conf Calamares (ESP sur /boot/efi + partition bios_grub pour x86_64)
+# Écriture de partition.conf Calamares (ESP sur /boot/efi si UEFI, MBR standard si BIOS)
 cat > /etc/calamares/modules/partition.conf << 'CALAMARES_PARTITION_CONF'
 # Configuration du module partition pour Arrera Linux x86_64
 ---
 defaultFileSystemType: "ext4"
 availableFileSystemTypes: ["ext4", "btrfs", "xfs"]
-createHybridBootloaderLayout: true
-defaultPartitionTableType: "gpt"
 efiSystemPartition: "/boot/efi"
 efiSystemPartitionSize: 600M
 essentialMounts: [ "live-*", "control", "ventoy" ]
