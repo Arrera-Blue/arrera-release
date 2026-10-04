@@ -13,7 +13,7 @@ part / --size=30720 --fstype=ext4
 # --------------------------------------------------------------------------
 # Paquets spécifiques à l'éducation
 # --------------------------------------------------------------------------
-%packages --ignoremissing
+%packages --ignoremissing --exclude-weakdeps
 
 # Configuration et intégration dédiées saveur Éducation
 arrera-installer-education
@@ -23,7 +23,6 @@ arrera-gnome-config-education
 # Logiciels éducatifs & pédagogiques
 gcompris-qt
 tuxmath
-scratch
 geany
 klettres
 pysycache
@@ -85,6 +84,15 @@ for u in six-mini six-super six-maxi; do
     fi
     passwd -d "$u"
 done
+
+# --------------------------------------------------------------------------
+# Nettoyage des caches et résidus temporaires pour réduire la taille de l'ISO
+# --------------------------------------------------------------------------
+echo "Nettoyage des résidus Flatpak, caches DNF et fichiers temporaires..."
+flatpak uninstall --unused -y 2>/dev/null || true
+rm -rf /var/tmp/flatpak-cache-* /root/.cache/flatpak 2>/dev/null || true
+dnf clean all 2>/dev/null || true
+rm -rf /var/cache/dnf/* /tmp/* 2>/dev/null || true
 
 echo "=== Saveur School configurée avec succès ==="
 %end
