@@ -322,6 +322,10 @@ for fpath in source_files:
                 elif stripped == "graphical":
                     # livemedia-creator interdit le mode graphique direct
                     continue
+                elif stripped.startswith("part / ") or stripped.startswith("part /--"):
+                    # Si une saveur redéfinit 'part /', elle remplace celle de l'architecture
+                    commands = [c for c in commands if not (c.strip().startswith("part / ") or c.strip().startswith("part /--"))]
+                    commands.append(line)
                 else:
                     commands.append(line)
             elif current_section == "packages":
@@ -341,6 +345,12 @@ final_lines.append("# ==========================================================
 cmd_block = "".join(commands).strip()
 cmd_block = cmd_block.replace("$releasever", releasever)
 cmd_block = cmd_block.replace("$basearch", arch)
+
+# Dimensionnement spécifique : la saveur School embarque 1700+ paquets et requiert 20 Go (20480 Mo)
+if flavor == "school":
+    import re
+    cmd_block = re.sub(r'(part\s+/\s+--size=)\d+', r'\g<1>20480', cmd_block)
+
 final_lines.append(cmd_block + "\n\n")
 
 # Ligne unique consolidée des services
