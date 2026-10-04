@@ -39,10 +39,7 @@ dbus
 # Applications bureautiques communes
 nautilus
 firefox
-gnome-tweaks
-gnome-extensions-app
 gnome-text-editor
-gnome-disk-utility
 loupe
 evince
 gnome-calendar
