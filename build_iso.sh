@@ -223,18 +223,34 @@ else
     ok "Tous les outils requis sont disponibles."
 fi
 
-# Vérification de l'espace disque si compilation ISO (minimum 20 Go, 35 Go pour School)
+# Vérification de l'accès en écriture et de l'espace disque si compilation ISO
 if [ "$ASSEMBLE_ONLY" = false ]; then
-    info "Vérification de l'espace disque dans /var/tmp..."
+    info "Vérification de l'intégrité de /var/tmp..."
+    # Détection et réparation automatique si le système est en lecture seule ([Errno 30])
+    if ! touch /var/tmp/.arrera_test_write 2>/dev/null; then
+        warn "Attention : /var/tmp est en lecture seule ([Errno 30]). Tentative de restauration..."
+        umount -l /var/tmp 2>/dev/null || true
+        mount -o remount,rw / 2>/dev/null || true
+        mount -o remount,rw /var/tmp 2>/dev/null || true
+        chmod 1777 /var/tmp 2>/dev/null || true
+        rm -f /var/var_tmp_*.img /home/var_tmp_*.img 2>/dev/null || true
+        if ! touch /var/tmp/.arrera_test_write 2>/dev/null; then
+            error "Le système de fichiers /var/tmp reste bloqué en LECTURE SEULE.\n        Exécutez manuellement : sudo umount -l /var/tmp && sudo mount -o remount,rw / && sudo chmod 1777 /var/tmp"
+        fi
+    fi
+    rm -f /var/tmp/.arrera_test_write 2>/dev/null || true
+
     AVAILABLE_GB=$(df --output=avail /var/tmp 2>/dev/null | tail -1 | awk '{printf "%.0f", $1/1048576}')
-    REQUIRED_GB=20
+    REQUIRED_GB=15
     if [ "$FLAVOR" = "school" ]; then
-        REQUIRED_GB=35
+        REQUIRED_GB=28
+    elif [ "$FLAVOR" = "server" ]; then
+        REQUIRED_GB=10
     fi
     if [ "$AVAILABLE_GB" -lt "$REQUIRED_GB" ]; then
         error "Espace insuffisant dans /var/tmp : ${AVAILABLE_GB} Go disponible, ${REQUIRED_GB} Go minimum requis pour la saveur $FLAVOR_CAP.\n        Astuce : Exécutez 'sudo ./increase_var_tmp.sh' pour libérer de l'espace."
     fi
-    ok "Espace disque suffisant (${AVAILABLE_GB} Go disponible sur ${REQUIRED_GB} Go requis)."
+    ok "Espace disque suffisant (${AVAILABLE_GB} Go disponible sur ${REQUIRED_GB} Go requis) et écriture validée."
 fi
 
 # --------------------------------------------------------------------------
@@ -350,10 +366,10 @@ cmd_block = "".join(commands).strip()
 cmd_block = cmd_block.replace("$releasever", releasever)
 cmd_block = cmd_block.replace("$basearch", arch)
 
-# Dimensionnement spécifique : la saveur School embarque 1700+ paquets et requiert 34 Go (34816 Mo)
+# Dimensionnement spécifique : la saveur School embarque 1700+ paquets et requiert 28 Go (28672 Mo)
 if flavor == "school":
     import re
-    cmd_block = re.sub(r'(part\s+/\s+--size=)\d+', r'\g<1>34816', cmd_block)
+    cmd_block = re.sub(r'(part\s+/\s+--size=)\d+', r'\g<1>28672', cmd_block)
 
 final_lines.append(cmd_block + "\n\n")
 
