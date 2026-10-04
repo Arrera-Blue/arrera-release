@@ -16,8 +16,8 @@ repo --name="rpmfusion-nonfree" --metalink="https://mirrors.rpmfusion.org/metali
 repo --name="rpmfusion-nonfree-updates" --metalink="https://mirrors.rpmfusion.org/metalink?repo=nonfree-fedora-updates-released-$releasever&arch=$basearch" --cost=200
 
 # RPM Sphere (basearch + noarch)
-repo --name="rpmsphere" --baseurl="https://github.com/rpmsphere/$basearch/raw/master/" --cost=300 --nogpgcheck
-repo --name="rpmsphere-noarch" --baseurl="https://github.com/rpmsphere/noarch/raw/master/" --cost=300 --nogpgcheck
+repo --name="rpmsphere" --baseurl="https://github.com/rpmsphere/$basearch/raw/master/" --cost=300
+repo --name="rpmsphere-noarch" --baseurl="https://github.com/rpmsphere/noarch/raw/master/" --cost=300
 
 # --------------------------------------------------------------------------
 # Paquets du Bureau Graphique Arrera
