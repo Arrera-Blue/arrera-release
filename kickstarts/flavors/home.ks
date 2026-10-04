@@ -23,6 +23,19 @@ gvfs-smb
 samba-client
 cifs-utils
 
+# Applications
+ptyxis
+baobab
+simple-scan
+gnome-sound-recorder
+gnome-characters
+geary
+loupe
+gnome-music
+webapp-manager
+vlc
+paper
+gnome-disk-utility
 %end
 
 # --------------------------------------------------------------------------
@@ -47,7 +60,10 @@ if command -v flatpak &>/dev/null; then
         it.mijorus.gearlever \
         io.missioncenter.MissionCenter \
         io.github.flattool.Warehouse \
-        com.github.tchx84.Flatseal 2>/dev/null || true
+        com.github.tchx84.Flatseal 
+        org.keepassxc.KeePassXC
+        me.proton.Pass 
+        org.onlyoffice.desktopeditors 2>/dev/null || true
 fi
 
 echo "=== Saveur Home configurée avec succès ==="
