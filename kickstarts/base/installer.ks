@@ -87,40 +87,49 @@ echo "=========================================================="
 echo "   Arrera Linux - Finalisation post-installation"
 echo "=========================================================="
 
-# 1. Vérification réseau et mise à jour des paquets Arrera (rapide et borné dans le temps)
+# 1. Vérification réseau et mise à jour DNF selon le mode choisi (online ou offline)
 echo "[1/8] Test de la connectivité Internet..."
 
-# Sauvegarder la cible du lien symbolique resolv.conf (souvent systemd-resolved)
-RESOLV_IS_LINK=0
-RESOLV_TARGET=""
-if [ -L /etc/resolv.conf ]; then
-    RESOLV_IS_LINK=1
-    RESOLV_TARGET=$(readlink /etc/resolv.conf 2>/dev/null || true)
-fi
+# Paramètre transmis par Calamares (depuis l'écran Mode d'installation : online ou offline)
+INSTALL_CHOICE="${1:-}"
 
-# Supprimer le lien symbolique (souvent brisé dans le chroot) avant d'écrire un fichier régulier
-rm -f /etc/resolv.conf 2>/dev/null || true
-cat > /etc/resolv.conf << 'DNS_EOF'
+IS_ONLINE=0
+if [ "$INSTALL_CHOICE" = "offline" ]; then
+    echo "-> Choix utilisateur : Mode hors-ligne demandé."
+    echo "-> Étape réseau ignorée : installation locale directe."
+else
+    # Sauvegarder la cible du lien symbolique resolv.conf (souvent systemd-resolved)
+    RESOLV_IS_LINK=0
+    RESOLV_TARGET=""
+    if [ -L /etc/resolv.conf ]; then
+        RESOLV_IS_LINK=1
+        RESOLV_TARGET=$(readlink /etc/resolv.conf 2>/dev/null || true)
+    fi
+
+    # Supprimer le lien symbolique (souvent brisé dans le chroot) avant d'écrire un fichier régulier
+    rm -f /etc/resolv.conf 2>/dev/null || true
+    cat > /etc/resolv.conf << 'DNS_EOF'
 nameserver 1.1.1.1
 nameserver 8.8.8.8
 DNS_EOF
 
-IS_ONLINE=0
-if curl -s --connect-timeout 3 -m 5 https://fedoraproject.org >/dev/null 2>&1 || \
-   curl -s --connect-timeout 3 -m 5 https://google.com >/dev/null 2>&1 || \
-   curl -s --connect-timeout 2 -m 4 http://1.1.1.1 >/dev/null 2>&1 || \
-   ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then
-    IS_ONLINE=1
-fi
+    if curl -s --connect-timeout 4 -m 6 https://fedoraproject.org >/dev/null 2>&1 || \
+       curl -s --connect-timeout 4 -m 6 https://google.com >/dev/null 2>&1 || \
+       curl -s --connect-timeout 3 -m 5 http://1.1.1.1 >/dev/null 2>&1 || \
+       ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then
+        IS_ONLINE=1
+    fi
 
-if [ "$IS_ONLINE" -eq 1 ]; then
-    echo "-> Connexion Internet confirmée !"
-    echo "-> Rafraîchissement des paquets Arrera (limité à 60s max)..."
-    timeout 60 dnf upgrade -y --disablerepo="*" --enablerepo="copr-arrera-blue" 2>/dev/null || true
-    echo "-> Étape réseau terminée."
-else
-    echo "-> Aucune connexion Internet détectée (ou mode hors-ligne)."
-    echo "-> Étape réseau ignorée : installation locale directe."
+    if [ "$IS_ONLINE" -eq 1 ]; then
+        echo "-> Connexion Internet confirmée !"
+        echo "-> Rafraîchissement des dépôts et mise à jour du système..."
+        dnf makecache -y || true
+        dnf upgrade -y --refresh || true
+        echo "-> Système mis à jour avec succès."
+    else
+        echo "-> Aucune connexion Internet détectée."
+        echo "-> Étape réseau ignorée : installation locale directe."
+    fi
 fi
 
 # Restauration propre du lien symbolique resolv.conf pour systemd-resolved
@@ -971,7 +980,7 @@ dontChroot: false
 timeout: 1200
 
 script:
-    - command: "/usr/bin/arrera-postinstall.sh"
+    - command: "/usr/bin/arrera-postinstall.sh \"${gs[packagechooser_installmode]}\""
       timeout: 1200
 CALAMARES_POSTINSTALL_CONF
 
