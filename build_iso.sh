@@ -242,9 +242,7 @@ if [ "$ASSEMBLE_ONLY" = false ]; then
 
     AVAILABLE_GB=$(df --output=avail /var/tmp 2>/dev/null | tail -1 | awk '{printf "%.0f", $1/1048576}')
     REQUIRED_GB=15
-    if [ "$FLAVOR" = "school" ]; then
-        REQUIRED_GB=28
-    elif [ "$FLAVOR" = "server" ]; then
+    if [ "$FLAVOR" = "server" ]; then
         REQUIRED_GB=10
     fi
     if [ "$AVAILABLE_GB" -lt "$REQUIRED_GB" ]; then
@@ -365,11 +363,6 @@ final_lines.append("# ==========================================================
 cmd_block = "".join(commands).strip()
 cmd_block = cmd_block.replace("$releasever", releasever)
 cmd_block = cmd_block.replace("$basearch", arch)
-
-# Dimensionnement spécifique : la saveur School embarque 1700+ paquets et requiert 28 Go (28672 Mo)
-if flavor == "school":
-    import re
-    cmd_block = re.sub(r'(part\s+/\s+--size=)\d+', r'\g<1>28672', cmd_block)
 
 final_lines.append(cmd_block + "\n\n")
 

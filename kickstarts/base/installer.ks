@@ -126,6 +126,12 @@ DNS_EOF
         dnf makecache -y || true
         dnf upgrade -y --refresh || true
         echo "-> Système mis à jour avec succès."
+
+        # Installation en ligne de la suite éducative School (Option B)
+        if [ -x /usr/bin/arrera-school-online-install.sh ]; then
+            echo "-> Lancement de l'installation en ligne de la suite Arrera School..."
+            /usr/bin/arrera-school-online-install.sh || true
+        fi
     else
         echo "-> Aucune connexion Internet détectée."
         echo "-> Étape réseau ignorée : installation locale directe."
