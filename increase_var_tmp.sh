@@ -2,7 +2,7 @@
 # ==============================================================================
 # Arrera Linux - Agrandissement de l'espace /var/tmp (increase_var_tmp.sh)
 # ==============================================================================
-# Ce script prépare et agrandit /var/tmp pour atteindre au minimum 40 Go libres,
+# Ce script prépare et agrandit /var/tmp pour atteindre au minimum 35 Go libres,
 # nécessaires à la compilation de la saveur School (1 700+ paquets).
 #
 # Actions effectuées automatiquement :
@@ -11,12 +11,12 @@
 #    (si le disque virtuel de la VM a été étendu dans l'hyperviseur : Proxmox, VMware, KVM...)
 # 3. Redimensionnement si /var/tmp est monté en tmpfs (RAM)
 # 4. Si l'espace physique reste insuffisant : création d'un disque virtuel loopback
-#    dédié de 40 Go au format ext4 monté proprement sur /var/tmp.
+#    dédié de 35 Go au format ext4 monté proprement sur /var/tmp.
 # ==============================================================================
 
 set -euo pipefail
 
-TARGET_GB="${1:-40}"
+TARGET_GB="${1:-35}"
 
 RED='\e[1;31m'
 GREEN='\e[1;32m'
@@ -191,7 +191,8 @@ chmod 1777 /var/tmp
 
 FINAL_GB=$(get_avail_gb)
 echo ""
-if [ "$FINAL_GB" -ge 38 ]; then
+ACCEPTABLE_MIN=$(( TARGET_GB - 2 ))
+if [ "$FINAL_GB" -ge "$ACCEPTABLE_MIN" ]; then
     ok "🎉 Disque temporaire dédié de ${FINAL_GB} Go monté avec succès sur /var/tmp !"
     echo ""
     info "Emplacement du fichier virtuel : $LOOP_IMG"

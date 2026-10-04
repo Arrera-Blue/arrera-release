@@ -6,9 +6,9 @@
 # ==============================================================================
 
 # --------------------------------------------------------------------------
-# Dimensionnement disque pour la saveur School (35 Go requis pour 1700+ paquets)
+# Dimensionnement disque pour la saveur School (34 Go requis pour 1700+ paquets)
 # --------------------------------------------------------------------------
-part / --size=35840 --fstype=ext4
+part / --size=34816 --fstype=ext4
 
 # --------------------------------------------------------------------------
 # Paquets spécifiques à l'éducation

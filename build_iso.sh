@@ -350,10 +350,10 @@ cmd_block = "".join(commands).strip()
 cmd_block = cmd_block.replace("$releasever", releasever)
 cmd_block = cmd_block.replace("$basearch", arch)
 
-# Dimensionnement spécifique : la saveur School embarque 1700+ paquets et requiert 35 Go (35840 Mo)
+# Dimensionnement spécifique : la saveur School embarque 1700+ paquets et requiert 34 Go (34816 Mo)
 if flavor == "school":
     import re
-    cmd_block = re.sub(r'(part\s+/\s+--size=)\d+', r'\g<1>35840', cmd_block)
+    cmd_block = re.sub(r'(part\s+/\s+--size=)\d+', r'\g<1>34816', cmd_block)
 
 final_lines.append(cmd_block + "\n\n")
 
