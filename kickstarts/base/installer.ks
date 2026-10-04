@@ -183,6 +183,59 @@ if command -v dracut >/dev/null 2>&1; then
     }
 fi
 
+# ------------------------------------------------------------------------------
+# GARANTIE : présence physique du noyau principal et de son initramfs dans /boot
+# Sur Fedora 44, le noyau est livré dans /usr/lib/modules/<kver>/vmlinuz et n'est
+# copié dans /boot que par kernel-install (souvent inopérant dans le chroot Calamares,
+# notamment pour un noyau ajouté par 'dnf upgrade'). Sans cette copie, GRUB affiche :
+#   "file '/boot/vmlinuz-<kver>' not found" (alors que le rescue, copié lui, démarre).
+# ------------------------------------------------------------------------------
+if grep -q '[[:space:]]/boot[[:space:]]' /etc/fstab 2>/dev/null && ! mountpoint -q /boot 2>/dev/null; then
+    mount /boot 2>/dev/null || true
+fi
+
+if [ -n "$KVER" ]; then
+    KMODDIR="/usr/lib/modules/${KVER}"
+
+    if [ ! -s "/boot/vmlinuz-${KVER}" ]; then
+        KSRC=""
+        if [ -s "$KMODDIR/vmlinuz" ]; then
+            KSRC="$KMODDIR/vmlinuz"
+        elif [ -n "$LATEST_KERNEL" ] && [ -s "$LATEST_KERNEL" ]; then
+            KSRC="$LATEST_KERNEL"
+        fi
+        if [ -n "$KSRC" ]; then
+            echo "-> Copie du noyau principal : $KSRC -> /boot/vmlinuz-${KVER}"
+            install -m 0755 "$KSRC" "/boot/vmlinuz-${KVER}" 2>/dev/null || cp -f "$KSRC" "/boot/vmlinuz-${KVER}" 2>/dev/null || true
+        else
+            echo "-> ERREUR : aucun binaire noyau trouvé pour la version $KVER !"
+        fi
+    fi
+
+    # Fichiers annexes standards Fedora
+    [ -f "$KMODDIR/System.map" ] && [ ! -f "/boot/System.map-${KVER}" ] && cp -f "$KMODDIR/System.map" "/boot/System.map-${KVER}" 2>/dev/null
+    [ -f "$KMODDIR/config" ] && [ ! -f "/boot/config-${KVER}" ] && cp -f "$KMODDIR/config" "/boot/config-${KVER}" 2>/dev/null
+
+    if [ ! -s "/boot/initramfs-${KVER}.img" ]; then
+        # dracut-ng / kernel-install peuvent avoir écrit l'initramfs ailleurs
+        IALT=""
+        for cand in /boot/*/"${KVER}"/initrd "$KMODDIR/initramfs.img"; do
+            [ -s "$cand" ] && { IALT="$cand"; break; }
+        done
+        if [ -n "$IALT" ]; then
+            echo "-> Copie de l'initramfs : $IALT -> /boot/initramfs-${KVER}.img"
+            cp -f "$IALT" "/boot/initramfs-${KVER}.img" 2>/dev/null || true
+        elif command -v dracut >/dev/null 2>&1; then
+            echo "-> Génération explicite de /boot/initramfs-${KVER}.img..."
+            dracut -f --add plymouth --kver "$KVER" "/boot/initramfs-${KVER}.img" 2>/dev/null || \
+                dracut -f --kver "$KVER" "/boot/initramfs-${KVER}.img" 2>/dev/null || true
+        fi
+    fi
+
+    [ -s "/boot/vmlinuz-${KVER}" ] && echo "-> OK : /boot/vmlinuz-${KVER} présent." || echo "-> ERREUR : /boot/vmlinuz-${KVER} absent !"
+    [ -s "/boot/initramfs-${KVER}.img" ] && echo "-> OK : /boot/initramfs-${KVER}.img présent." || echo "-> ERREUR : /boot/initramfs-${KVER}.img absent !"
+fi
+
 # Détecter l'initramfs généré
 LATEST_INITRD=""
 if [ -n "$KVER" ] && [ -f "/boot/initramfs-${KVER}.img" ]; then
