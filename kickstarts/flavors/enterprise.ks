@@ -37,6 +37,28 @@ gnupg2
 opensc
 pcsc-lite
 
+# Applications
+ptyxis
+baobab
+simple-scan
+gnome-sound-recorder
+gnome-characters
+thunderbird
+thunderbird-librnp-rnp
+loupe
+gnome-music
+webapp-manager
+vlc
+paper
+gnome-disk-utility
+
+# Utility
+freeipa-client
+realmd
+sssd
+adcli
+oddjob-mkhomedir
+
 %end
 
 # --------------------------------------------------------------------------
