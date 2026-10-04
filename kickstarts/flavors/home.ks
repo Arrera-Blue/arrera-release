@@ -60,9 +60,9 @@ if command -v flatpak &>/dev/null; then
         it.mijorus.gearlever \
         io.missioncenter.MissionCenter \
         io.github.flattool.Warehouse \
-        com.github.tchx84.Flatseal 
-        org.keepassxc.KeePassXC
-        me.proton.Pass 
+        com.github.tchx84.Flatseal \
+        org.keepassxc.KeePassXC \
+        me.proton.Pass \
         org.onlyoffice.desktopeditors 2>/dev/null || true
 fi
 
