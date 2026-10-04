@@ -36,6 +36,7 @@ webapp-manager
 vlc
 paper
 gnome-disk-utility
+gimp
 %end
 
 # --------------------------------------------------------------------------

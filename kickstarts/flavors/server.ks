@@ -31,6 +31,8 @@ podman-compose
 container-selinux
 buildah
 skopeo
+freeipa-server
+freeipa-server-dns
 
 # Outils d'administration système, diagnostic et réseau
 tmux

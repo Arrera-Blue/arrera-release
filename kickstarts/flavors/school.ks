@@ -20,6 +20,18 @@ gcompris-qt
 tuxmath
 scratch
 geany
+klettres
+pysycache
+stellarium
+goldendict
+minetest
+audacity
+vlc
+openshot
+openshot-lang
+pinta
+gimp
+webapp-manager
 
 # Conteneurs pour apprentissage informatique et dev
 podman
@@ -45,7 +57,29 @@ fi
 if command -v flatpak &>/dev/null; then
     echo "Configuration du dépôt Flathub pour la saveur School..."
     flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+    flatpak install -y --noninteractive flathub \
+        org.tuxpaint.Tuxpaint \
+        lol.siembra.tuxtypeplus \
+        edu.mit.Scratch \
+        org.geogebra.GeoGebra \
+        ch.openboard.OpenBoard \
+        com.github.xournalpp.xournalpp \
+        org.onlyoffice.desktopeditors 2>/dev/null || true
 fi
+
+# Création des comptes éducatifs sans mot de passe
+echo "Création des utilisateurs six-mini, six-super et six-maxi sans mot de passe..."
+for u in six-mini six-super six-maxi; do
+    if ! id -u "$u" &>/dev/null; then
+        case "$u" in
+            six-mini)  useradd -m -s /bin/bash -c "Six Mini" "$u" ;;
+            six-super) useradd -m -s /bin/bash -c "Six Super" "$u" ;;
+            six-maxi)  useradd -m -s /bin/bash -c "Six Maxi" "$u" ;;
+            *)         useradd -m -s /bin/bash "$u" ;;
+        esac
+    fi
+    passwd -d "$u"
+done
 
 echo "=== Saveur School configurée avec succès ==="
 %end
