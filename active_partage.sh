@@ -1,0 +1,1 @@
+sudo mount -t cifs //192.168.122.1/MonPartage /mnt/samba/ -o username=baptistep,vers=3.0
