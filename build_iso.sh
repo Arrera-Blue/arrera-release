@@ -223,14 +223,18 @@ else
     ok "Tous les outils requis sont disponibles."
 fi
 
-# Vérification de l'espace disque si compilation ISO (minimum 20 Go dans /var/tmp)
+# Vérification de l'espace disque si compilation ISO (minimum 20 Go, 40 Go pour School)
 if [ "$ASSEMBLE_ONLY" = false ]; then
     info "Vérification de l'espace disque dans /var/tmp..."
     AVAILABLE_GB=$(df --output=avail /var/tmp 2>/dev/null | tail -1 | awk '{printf "%.0f", $1/1048576}')
-    if [ "$AVAILABLE_GB" -lt 20 ]; then
-        error "Espace insuffisant dans /var/tmp : ${AVAILABLE_GB} Go disponible, 20 Go minimum requis."
+    REQUIRED_GB=20
+    if [ "$FLAVOR" = "school" ]; then
+        REQUIRED_GB=40
     fi
-    ok "Espace disque suffisant (${AVAILABLE_GB} Go disponible)."
+    if [ "$AVAILABLE_GB" -lt "$REQUIRED_GB" ]; then
+        error "Espace insuffisant dans /var/tmp : ${AVAILABLE_GB} Go disponible, ${REQUIRED_GB} Go minimum requis pour la saveur $FLAVOR_CAP.\n        Astuce : Exécutez 'sudo ./increase_var_tmp.sh' pour étendre l'espace automatiquement."
+    fi
+    ok "Espace disque suffisant (${AVAILABLE_GB} Go disponible sur ${REQUIRED_GB} Go requis)."
 fi
 
 # --------------------------------------------------------------------------
@@ -346,10 +350,10 @@ cmd_block = "".join(commands).strip()
 cmd_block = cmd_block.replace("$releasever", releasever)
 cmd_block = cmd_block.replace("$basearch", arch)
 
-# Dimensionnement spécifique : la saveur School embarque 1700+ paquets et requiert 30 Go (30720 Mo)
+# Dimensionnement spécifique : la saveur School embarque 1700+ paquets et requiert 35 Go (35840 Mo)
 if flavor == "school":
     import re
-    cmd_block = re.sub(r'(part\s+/\s+--size=)\d+', r'\g<1>30720', cmd_block)
+    cmd_block = re.sub(r'(part\s+/\s+--size=)\d+', r'\g<1>35840', cmd_block)
 
 final_lines.append(cmd_block + "\n\n")
 
