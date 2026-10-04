@@ -223,16 +223,16 @@ else
     ok "Tous les outils requis sont disponibles."
 fi
 
-# Vérification de l'espace disque si compilation ISO (minimum 20 Go, 40 Go pour School)
+# Vérification de l'espace disque si compilation ISO (minimum 20 Go, 35 Go pour School)
 if [ "$ASSEMBLE_ONLY" = false ]; then
     info "Vérification de l'espace disque dans /var/tmp..."
     AVAILABLE_GB=$(df --output=avail /var/tmp 2>/dev/null | tail -1 | awk '{printf "%.0f", $1/1048576}')
     REQUIRED_GB=20
     if [ "$FLAVOR" = "school" ]; then
-        REQUIRED_GB=40
+        REQUIRED_GB=35
     fi
     if [ "$AVAILABLE_GB" -lt "$REQUIRED_GB" ]; then
-        error "Espace insuffisant dans /var/tmp : ${AVAILABLE_GB} Go disponible, ${REQUIRED_GB} Go minimum requis pour la saveur $FLAVOR_CAP.\n        Astuce : Exécutez 'sudo ./increase_var_tmp.sh' pour étendre l'espace automatiquement."
+        error "Espace insuffisant dans /var/tmp : ${AVAILABLE_GB} Go disponible, ${REQUIRED_GB} Go minimum requis pour la saveur $FLAVOR_CAP.\n        Astuce : Exécutez 'sudo ./increase_var_tmp.sh' pour libérer de l'espace."
     fi
     ok "Espace disque suffisant (${AVAILABLE_GB} Go disponible sur ${REQUIRED_GB} Go requis)."
 fi
