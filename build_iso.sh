@@ -362,8 +362,8 @@ if services_enabled or services_disabled:
         srv_line += " --disabled=" + ",".join(dict.fromkeys(services_disabled))
     final_lines.append(f"# Configuration unifiée des services\n{srv_line}\n\n")
 
-# Section des paquets unifiée et dédoublonnée (exclusion des dépendances faibles pour réduire la taille)
-final_lines.append("%packages --ignoremissing --exclude-weakdeps\n")
+# Section des paquets unifiée et dédoublonnée
+final_lines.append("%packages --ignoremissing\n")
 seen_pkgs = set()
 for pkg in packages:
     p_strip = pkg.strip()

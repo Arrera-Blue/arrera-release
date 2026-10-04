@@ -13,7 +13,7 @@ part / --size=30720 --fstype=ext4
 # --------------------------------------------------------------------------
 # Paquets spécifiques à l'éducation
 # --------------------------------------------------------------------------
-%packages --ignoremissing --exclude-weakdeps
+%packages --ignoremissing
 
 # Configuration et intégration dédiées saveur Éducation
 arrera-installer-education
