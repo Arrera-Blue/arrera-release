@@ -19,6 +19,9 @@ arrera-installer-education
 arrera-branding-education
 arrera-gnome-config-education
 
+# Terminal GNOME
+ptyxis
+
 # Conteneurs pour apprentissage informatique et dev
 podman
 container-selinux
@@ -53,19 +56,21 @@ for u in six-mini six-super six-maxi; do
     passwd -d "$u"
 done
 
-# Création du script d'installation en ligne des applications éducatives (Option B)
+# Création du script d'installation de la suite éducative School (First Boot)
 cat > /usr/bin/arrera-school-online-install.sh << 'SCHOOL_INSTALL_EOF'
 #!/bin/bash
 # ==============================================================================
-# Arrera Linux - Installation en ligne de la Suite Éducative School
+# Arrera Linux - Installation de la Suite Éducative School
 # ==============================================================================
 set +e
 LOGFILE="/var/log/arrera-school-install.log"
-exec > >(tee -a "$LOGFILE") 2>&1
+mkdir -p /var/log
 
 echo "=========================================================="
-echo "   Arrera School - Installation en ligne des applications"
+echo "   Arrera School - Installation de la suite pédagogique"
 echo "=========================================================="
+echo "Veuillez patienter pendant le téléchargement des applications..."
+echo ""
 
 # Test de connectivité Internet
 IS_ONLINE=0
@@ -77,11 +82,17 @@ fi
 
 if [ "$IS_ONLINE" -ne 1 ]; then
     echo "⚠️ Pas de connexion Internet détectée."
-    echo "Vous pourrez installer la suite plus tard avec : sudo /usr/bin/arrera-school-online-install.sh"
+    echo "Veuillez connecter votre ordinateur à Internet (Wi-Fi ou câble)."
+    echo ""
+    echo "Vous pourrez relancer cette installation à tout moment depuis le menu :"
+    echo "-> 'Installer les applications éducatives'"
+    echo ""
+    read -rp "Appuyez sur Entrée pour quitter..." _
     exit 0
 fi
 
-echo "-> Connexion Internet confirmée ! Installation des logiciels pédagogiques..."
+echo "-> Connexion Internet confirmée !"
+echo ""
 
 # 1. Installation des logiciels RPM Fedora
 echo "-> [1/2] Installation des paquets RPM (GCompris, TuxMath, Stellarium, Minetest, GIMP...)..."
@@ -100,10 +111,11 @@ dnf install -y --setopt=install_weak_deps=False \
     openshot-lang \
     pinta \
     gimp \
-    webapp-manager 2>&1 || true
+    webapp-manager 2>&1 | tee -a "$LOGFILE" || true
 
 # 2. Installation des applications Flatpak Flathub
 if command -v flatpak &>/dev/null; then
+    echo ""
     echo "-> [2/2] Configuration Flathub et installation des applications Flatpak..."
     flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
     flatpak install -y --noninteractive flathub \
@@ -113,26 +125,46 @@ if command -v flatpak &>/dev/null; then
         org.geogebra.GeoGebra \
         ch.openboard.OpenBoard \
         com.github.xournalpp.xournalpp \
-        org.onlyoffice.desktopeditors 2>&1 || true
+        org.onlyoffice.desktopeditors 2>&1 | tee -a "$LOGFILE" || true
 fi
 
-echo "=== Suite Arrera School installée avec succès ==="
+# Nettoyage automatique une fois l'installation terminée avec succès
+rm -f /etc/xdg/autostart/arrera-school-setup.desktop 2>/dev/null || true
+rm -f /usr/share/applications/arrera-school-setup.desktop 2>/dev/null || true
+rm -f /etc/sudoers.d/arrera-school 2>/dev/null || true
+
+echo ""
+echo "=========================================================="
+echo "   🎉 Suite Arrera School installée avec succès !"
+echo "=========================================================="
+echo "Toutes les applications éducatives sont prêtes dans le menu."
+echo ""
+read -rp "Appuyez sur Entrée pour fermer cette fenêtre..." _
+exit 0
 SCHOOL_INSTALL_EOF
 
-chmod +x /usr/bin/arrera-school-online-install.sh
+chmod 0755 /usr/bin/arrera-school-online-install.sh
 
-# Raccourci menu d'application au cas où l'installation s'est faite hors-ligne
-mkdir -p /usr/share/applications
+# Autorisation sudo sans mot de passe dédiée pour ce script
+mkdir -p /etc/sudoers.d
+echo "ALL ALL=(ALL) NOPASSWD: /usr/bin/arrera-school-online-install.sh" > /etc/sudoers.d/arrera-school
+chmod 0440 /etc/sudoers.d/arrera-school
+
+# Lanceur d'installation dans le menu et au premier démarrage
+mkdir -p /usr/share/applications /etc/xdg/autostart
 cat > /usr/share/applications/arrera-school-setup.desktop << 'DESKTOP_EOF'
 [Desktop Entry]
 Name=Installer les applications éducatives
 Comment=Télécharge et installe la suite éducative Arrera School
-Exec=gnome-terminal -- /bin/bash -c "sudo /usr/bin/arrera-school-online-install.sh; echo 'Appuyez sur Entrée pour fermer...'; read"
+Exec=sh -c "if command -v ptyxis >/dev/null 2>&1; then ptyxis -- sudo /usr/bin/arrera-school-online-install.sh; elif command -v gnome-terminal >/dev/null 2>&1; then gnome-terminal -- sudo /usr/bin/arrera-school-online-install.sh; else xterm -e sudo /usr/bin/arrera-school-online-install.sh; fi"
 Icon=system-software-install
 Terminal=false
 Type=Application
 Categories=Education;System;
 DESKTOP_EOF
+
+chmod 0644 /usr/share/applications/arrera-school-setup.desktop
+cp -f /usr/share/applications/arrera-school-setup.desktop /etc/xdg/autostart/arrera-school-setup.desktop
 
 # --------------------------------------------------------------------------
 # Nettoyage des caches et résidus temporaires pour l'ISO
