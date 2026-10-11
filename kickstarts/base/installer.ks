@@ -1037,6 +1037,17 @@ script:
       timeout: 1200
 CALAMARES_POSTINSTALL_CONF
 
+cat > /etc/calamares/modules/shellprocess-postinstall-education.conf << 'CALAMARES_POSTINSTALL_ED_CONF'
+# Configuration du module shellprocess-postinstall pour Arrera Linux Éducation
+---
+dontChroot: false
+timeout: 1200
+
+script:
+    - command: "/usr/bin/arrera-postinstall.sh \"online\""
+      timeout: 1200
+CALAMARES_POSTINSTALL_ED_CONF
+
 # 3. Configuration principale de Calamares (settings.conf par défaut si non fourni par la saveur)
 if [ ! -f /etc/calamares/settings.conf ]; then
 cat > /etc/calamares/settings.conf << 'CALAMARES_SETTINGS_CONF'
