@@ -4,10 +4,13 @@
 # Amorçage GRUB2 + Shim certifié Microsoft UEFI CA (Secure Boot), microcodes et ESP
 # ==============================================================================
 
-# Partitionnement fixe pour livemedia-creator
+# Partitionnement fixe pour livemedia-creator (15 Go pour éviter toute saturation avec Flatpak/firmwares)
 zerombr
 clearpart --all --initlabel
-part / --size=10240 --fstype=ext4
+part / --size=15360 --fstype=ext4
+
+# Dépôt RPM Sphere binaire (spécifique x86_64)
+repo --name="rpmsphere" --baseurl="https://github.com/rpmsphere/x86_64/raw/master/" --cost=300
 
 # --------------------------------------------------------------------------
 # Paquets d'amorçage x86_64 (UEFI Secure Boot & BIOS Legacy)
@@ -25,6 +28,12 @@ efibootmgr
 efivar
 dosfstools
 microcode_ctl
+
+# Pilotes graphiques, décodage vidéo Intel et compatibilité 32-bit (Wine / Steam)
+intel-media-driver
+mesa-dri-drivers.i686
+mesa-vulkan-drivers.i686
+vulkan-loader.i686
 
 %end
 

@@ -8,7 +8,7 @@
 zerombr
 clearpart --all --initlabel
 part /boot/efi --size=1024 --fstype=efi
-part / --size=10240 --fstype=ext4
+part / --size=15360 --fstype=ext4
 
 # --------------------------------------------------------------------------
 # Paquets d'amorçage ARM64

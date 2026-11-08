@@ -74,9 +74,17 @@ if [ -f /etc/calamares/settings-enterprise.conf ]; then
 elif [ -f /etc/calamares/settings.conf ]; then
     sed -i 's/^branding:.*/branding: arrera-enterprise/' /etc/calamares/settings.conf
 fi
+[ -x /usr/bin/arrera-calamares-sanitize.sh ] && /usr/bin/arrera-calamares-sanitize.sh || true
 
 # Activation des services de cartes à puce / jetons de sécurité
 systemctl enable pcscd 2>/dev/null || true
+
+# Restauration de resolv.conf et nettoyage des caches pour l'ISO
+if [ -f /tmp/.arrera_resolv_target ]; then
+    ln -sf "$(cat /tmp/.arrera_resolv_target)" /etc/resolv.conf 2>/dev/null || true
+fi
+dnf clean all 2>/dev/null || true
+rm -rf /var/cache/dnf/* /tmp/* /tmp/.* 2>/dev/null || true
 
 echo "=== Saveur Entreprise configurée avec succès ==="
 %end

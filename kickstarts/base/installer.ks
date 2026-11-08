@@ -18,6 +18,14 @@ squashfs-tools
 qt6-qtdeclarative
 qt6-qtquickcontrols2
 
+# Pilotes graphiques et bus requis pour le kiosque Wayland (Cage + Calamares), y compris sur l'ISO Server
+mesa-dri-drivers
+mesa-vulkan-drivers
+vulkan-loader
+dbus
+adwaita-icon-theme
+adwaita-cursor-theme
+
 %end
 
 # --------------------------------------------------------------------------
@@ -965,7 +973,7 @@ rm -f /etc/gdm/custom.conf
 
 # 7. Nettoyer le compte Live temporaire 'arrera' si un utilisateur a été créé
 echo "[7/8] Vérification des comptes utilisateurs..."
-OTHER_USER=$(awk -F: '$3 >= 1000 && $1 != "arrera" && $1 != "nobody" {print $1}' /etc/passwd | head -n 1)
+OTHER_USER=$(awk -F: '$3 >= 1000 && $1 != "arrera" && $1 != "nobody" && $1 != "six-mini" && $1 != "six-super" && $1 != "six-maxi" {print $1}' /etc/passwd | head -n 1)
 if [ -n "$OTHER_USER" ]; then
     echo "-> Utilisateur principal installé détecté : $OTHER_USER"
     echo "-> Suppression du compte temporaire live 'arrera'..."
@@ -983,8 +991,8 @@ rm -f /etc/xdg/autostart/install-*.desktop 2>/dev/null || true
 rm -f /usr/share/applications/calamares*.desktop 2>/dev/null || true
 
 # Désinstaller proprement les paquets de l'installateur du système cible
-echo "-> Désinstallation des paquets calamares, arrera-installer et cage..."
-rpm -e --nodeps calamares arrera-installer arrera-installer-home arrera-installer-education arrera-installer-enterprise arrera-installer-server cage 2>/dev/null || true
+echo "-> Désinstallation des paquets calamares, arrera-installer, cage et gnome-extensions-app..."
+rpm -e --nodeps calamares arrera-installer arrera-installer-home arrera-installer-education arrera-installer-enterprise arrera-installer-server cage gnome-extensions-app 2>/dev/null || true
 
 # Sur ARM64, purger les paquets d'amorçage du média Live ISO (grub2/shim) pour conserver un système 100% systemd-boot
 if [ "$TARGET_ARCH" = "aarch64" ] || [ "$TARGET_ARCH" = "arm64" ]; then

@@ -6,8 +6,8 @@
 # L'environnement de bureau GNOME Arrera est fourni par base/desktop.ks
 # ==============================================================================
 
-# Partitionnement standard (10 Go suffisent pour l'ISO de base)
-part / --size=10240 --fstype=ext4
+# Partitionnement standard (15 Go pour éviter toute saturation lors de la création de l'ISO)
+part / --size=15360 --fstype=ext4
 
 # --------------------------------------------------------------------------
 # Paquets spécifiques à l'éducation (Socle de base)
@@ -41,9 +41,11 @@ if [ -f /etc/calamares/settings-education.conf ]; then
 elif [ -f /etc/calamares/settings.conf ]; then
     sed -i 's/^branding:.*/branding: arrera-education/' /etc/calamares/settings.conf
 fi
+[ -x /usr/bin/arrera-calamares-sanitize.sh ] && /usr/bin/arrera-calamares-sanitize.sh || true
 
-# Création des comptes éducatifs sans mot de passe
+# Création des comptes éducatifs sans mot de passe (avec support GDM nopasswdlogin)
 echo "Création des utilisateurs six-mini, six-super et six-maxi sans mot de passe..."
+groupadd -r nopasswdlogin 2>/dev/null || true
 for u in six-mini six-super six-maxi; do
     if ! id -u "$u" &>/dev/null; then
         case "$u" in
@@ -54,7 +56,12 @@ for u in six-mini six-super six-maxi; do
         esac
     fi
     passwd -d "$u"
+    usermod -aG nopasswdlogin "$u" 2>/dev/null || true
 done
+
+if [ -f /etc/pam.d/gdm-password ] && ! grep -q "nopasswdlogin" /etc/pam.d/gdm-password; then
+    sed -i '1i auth       sufficient   pam_succeed_if.so user ingroup nopasswdlogin' /etc/pam.d/gdm-password 2>/dev/null || true
+fi
 
 # Création du script d'installation de la suite éducative School (First Boot)
 cat > /usr/bin/arrera-school-online-install.sh << 'SCHOOL_INSTALL_EOF'
@@ -170,8 +177,11 @@ cp -f /usr/share/applications/arrera-school-setup.desktop /etc/xdg/autostart/arr
 # Nettoyage des caches et résidus temporaires pour l'ISO
 # --------------------------------------------------------------------------
 echo "Nettoyage des résidus..."
+if [ -f /tmp/.arrera_resolv_target ]; then
+    ln -sf "$(cat /tmp/.arrera_resolv_target)" /etc/resolv.conf 2>/dev/null || true
+fi
 dnf clean all 2>/dev/null || true
-rm -rf /var/cache/dnf/* /tmp/* 2>/dev/null || true
+rm -rf /var/cache/dnf/* /tmp/* /tmp/.* 2>/dev/null || true
 
 echo "=== Saveur School configurée avec succès ==="
 %end

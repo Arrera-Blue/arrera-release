@@ -74,6 +74,13 @@ bzip2
 btop
 fastfetch
 bash-completion
+abpm
+
+# Systèmes de fichiers et gestion du stockage (Calamares & système cible)
+e2fsprogs
+btrfs-progs
+xfsprogs
+lvm2
 
 # Python et utilitaires terminal
 python3
@@ -85,11 +92,15 @@ ImageMagick
 plymouth
 plymouth-plugin-script
 
-# Audio, vidéo et connectivité réseau
+# Audio, vidéo et connectivité réseau / Bluetooth
 pipewire
 pipewire-pulseaudio
 wireplumber
+NetworkManager
 NetworkManager-wifi
+wpa_supplicant
+iwd
+bluez
 firewalld
 
 # Polices système
@@ -144,6 +155,18 @@ cost=100
 COPR_REPO_EOF
 
 # Importer la clé publique GPG officielle du Copr Arrera
+# S'assurer que la résolution DNS fonctionne dans le chroot Anaconda pour tous les %post
+if ! curl -s --connect-timeout 3 https://fedoraproject.org >/dev/null 2>&1; then
+    if [ -L /etc/resolv.conf ]; then
+        readlink /etc/resolv.conf > /tmp/.arrera_resolv_target 2>/dev/null || true
+        rm -f /etc/resolv.conf
+    fi
+    cat > /etc/resolv.conf << 'CHROOT_DNS_EOF'
+nameserver 1.1.1.1
+nameserver 8.8.8.8
+CHROOT_DNS_EOF
+fi
+
 rpm --import https://download.copr.fedorainfracloud.org/results/arrera-software/arrera-blue/pubkey.gpg 2>/dev/null || true
 
 echo "=== Socle commun configuré avec succès ==="

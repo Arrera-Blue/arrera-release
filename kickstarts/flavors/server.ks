@@ -61,11 +61,19 @@ if [ -f /etc/calamares/settings-server.conf ]; then
 elif [ -f /etc/calamares/settings.conf ]; then
     sed -i 's/^branding:.*/branding: arrera-server/' /etc/calamares/settings.conf
 fi
+[ -x /usr/bin/arrera-calamares-sanitize.sh ] && /usr/bin/arrera-calamares-sanitize.sh || true
 
 # Forcer le mode console / headless
 systemctl set-default multi-user.target 2>/dev/null || true
 systemctl enable cockpit.socket 2>/dev/null || true
 systemctl enable podman 2>/dev/null || true
+
+# Restauration de resolv.conf et nettoyage des caches pour l'ISO
+if [ -f /tmp/.arrera_resolv_target ]; then
+    ln -sf "$(cat /tmp/.arrera_resolv_target)" /etc/resolv.conf 2>/dev/null || true
+fi
+dnf clean all 2>/dev/null || true
+rm -rf /var/cache/dnf/* /tmp/* /tmp/.* 2>/dev/null || true
 
 echo "=== Saveur Serveur configurée avec succès ==="
 %end

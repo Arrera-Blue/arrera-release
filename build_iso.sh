@@ -149,7 +149,7 @@ fi
 BUILD_DIR="/var/tmp/arrera-build"
 RESULT_DIR="/var/tmp/arrera-iso"
 KS_FINAL="$BUILD_DIR/arrera-final.ks"
-LMC_LOG="$BUILD_DIR/livemedia.log"
+LMC_LOG="$BUILD_DIR/livemedia-creator.log"
 
 KS_BASE_COMMON="$SCRIPT_DIR/kickstarts/base/common.ks"
 KS_BASE_INSTALLER="$SCRIPT_DIR/kickstarts/base/installer.ks"
@@ -246,7 +246,7 @@ if [ "$ASSEMBLE_ONLY" = false ]; then
         REQUIRED_GB=10
     fi
     if [ "$AVAILABLE_GB" -lt "$REQUIRED_GB" ]; then
-        error "Espace insuffisant dans /var/tmp : ${AVAILABLE_GB} Go disponible, ${REQUIRED_GB} Go minimum requis pour la saveur $FLAVOR_CAP.\n        Astuce : Exécutez 'sudo ./increase_var_tmp.sh' pour libérer de l'espace."
+        error "Espace insuffisant dans /var/tmp : ${AVAILABLE_GB} Go disponible, ${REQUIRED_GB} Go minimum requis pour la saveur $FLAVOR_CAP.\n        Astuce : Nettoyez /var/tmp (sudo rm -rf /var/tmp/lmc-* /var/tmp/lorax*) ou agrandissez le disque de la VM."
     fi
     ok "Espace disque suffisant (${AVAILABLE_GB} Go disponible sur ${REQUIRED_GB} Go requis) et écriture validée."
 fi
@@ -340,6 +340,9 @@ for fpath in source_files:
                 elif stripped == "graphical":
                     # livemedia-creator interdit le mode graphique direct
                     continue
+                elif flavor == "server" and stripped.startswith('repo --name="rpmsphere"'):
+                    # La saveur serveur (headless) n'utilise pas les dépôts bureautiques tiers
+                    continue
                 elif stripped.startswith("part / ") or stripped.startswith("part /--"):
                     # Si une saveur redéfinit 'part /', elle remplace celle de l'architecture
                     commands = [c for c in commands if not (c.strip().startswith("part / ") or c.strip().startswith("part /--"))]
@@ -348,6 +351,9 @@ for fpath in source_files:
                     commands.append(line)
             elif current_section == "packages":
                 if stripped and not stripped.startswith("#"):
+                    if flavor == "server" and (stripped.endswith(".i686") or stripped == "intel-media-driver"):
+                        # Exclure les pilotes 32-bit Wine/Steam et multimédia RPM Fusion sur la saveur Serveur
+                        continue
                     packages.append(line)
             elif current_section == "post":
                 current_post_lines.append(line)

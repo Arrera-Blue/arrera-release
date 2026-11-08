@@ -52,20 +52,22 @@ if [ -f /etc/calamares/settings-home.conf ]; then
 elif [ -f /etc/calamares/settings.conf ]; then
     sed -i 's/^branding:.*/branding: arrera-home/' /etc/calamares/settings.conf
 fi
+[ -x /usr/bin/arrera-calamares-sanitize.sh ] && /usr/bin/arrera-calamares-sanitize.sh || true
 
 # Configuration Flathub et installation des Flatpaks bureautiques recommandés
 if command -v flatpak &>/dev/null; then
     echo "Configuration du dépôt Flathub et pré-installation des Flatpaks..."
     flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
     flatpak install -y --noninteractive flathub \
-        it.mijorus.gearlever \
-        io.missioncenter.MissionCenter \
-        io.github.flattool.Warehouse \
-        com.github.tchx84.Flatseal \
-        org.keepassxc.KeePassXC \
-        me.proton.Pass \
-        org.onlyoffice.desktopeditors 2>/dev/null || true
+        io.missioncenter.MissionCenter 2>/dev/null || true
 fi
+
+# Restauration de resolv.conf et nettoyage des caches pour l'ISO
+if [ -f /tmp/.arrera_resolv_target ]; then
+    ln -sf "$(cat /tmp/.arrera_resolv_target)" /etc/resolv.conf 2>/dev/null || true
+fi
+dnf clean all 2>/dev/null || true
+rm -rf /var/cache/dnf/* /tmp/* /tmp/.* 2>/dev/null || true
 
 echo "=== Saveur Home configurée avec succès ==="
 %end
