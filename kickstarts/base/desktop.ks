@@ -55,9 +55,7 @@ gnome-shell-extension-forge
 gnome-shell-extension-gpaste
 gnome-shell-extension-desktop-icons
 gnome-shell-extension-background-logo
-gnome-shell-extension-arrera-dock
-gnome-shell-extension-arrera-app-menu
-gnome-shell-extension-arrera-top-bar
+gnome-shell-extension-arrera-desktop
 
 # Écosystème Arrera (depuis Copr)
 blue-hub

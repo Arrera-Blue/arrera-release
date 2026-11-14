@@ -14,7 +14,7 @@ L'objectif est d'éliminer le script `setup-dev-env.sh` en exploitant les paquet
 | **`arrera-gnome-config`** | `2026.beta.1-2` | ✅ Extensions GNOME activées par défaut<br>✅ Fond par défaut `blue.png`<br>✅ Boutons fenêtres (min/max/close)<br>✅ Politique Firefox (`policies.json`) | *Complet* |
 | **`arrera-gnome-control-center`** | `1:50.4-2026.beta.1` | ✅ Panneau Paramètres GNOME adapté Arrera<br>✅ Intégration complète des réglages d'extensions<br>✅ Remplace/obsolète `gnome-control-center` standard | *Complet* |
 | **`arrera-wallpapers`** | `2026.beta.1-1` | ✅ 11 fonds d'écran de couleur<br>✅ XML GNOME background properties | *Complet* |
-| **`gnome-shell-extension-arrera-dock`** | `1.0.0-0.1.beta1` | ✅ Extension dock officielle d'Arrera | *Complet* |
+| **`gnome-shell-extension-arrera-desktop`** | `1.0.0-0.1.beta1` | ✅ Extension desktop officielle d'Arrera | *Complet* |
 
 ---
 
