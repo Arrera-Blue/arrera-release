@@ -627,9 +627,114 @@ PRIMARY_BLS_EOF
             done
         fi
 
+        # Déterminer les noms de fichiers noyau / initramfs pour le grub.cfg et le stub EFI
+        KNAME="vmlinuz-$KVER"
+        [ -f "/boot/$KNAME" ] || KNAME=$(basename "$LATEST_KERNEL" 2>/dev/null || echo "vmlinuz")
+        INAME="initramfs-${KVER}.img"
+        [ -f "/boot/$INAME" ] || [ -z "$LATEST_INITRD" ] || INAME=$(basename "$LATEST_INITRD")
+
+        # S'assurer que /boot est bien monté s'il figure dans fstab
+        if grep -q '[[:space:]]/boot[[:space:]]' /etc/fstab 2>/dev/null; then
+            if ! mountpoint -q /boot 2>/dev/null; then
+                mount /boot 2>/dev/null || true
+            fi
+        fi
+
+        # Détection précise de la partition de démarrage (BOOT_PART_DEV), de son numéro et du disque cible (TARGET_DISK)
+        TARGET_DISK=""
+        BOOT_PART_NUM=""
+        if [ -z "$ROOT_PART_DEV" ] || [ ! -b "$ROOT_PART_DEV" ]; then
+            if [ -n "$TARGET_ROOT_UUID" ]; then
+                ROOT_PART_DEV=$(blkid -U "$TARGET_ROOT_UUID" 2>/dev/null || findfs UUID="$TARGET_ROOT_UUID" 2>/dev/null || true)
+            fi
+        fi
+        if [ -z "$ROOT_PART_DEV" ] || [ ! -b "$ROOT_PART_DEV" ]; then
+            ROOT_PART_DEV=$(findmnt -n -o SOURCE / 2>/dev/null || true)
+        fi
+
+        BOOT_PART_DEV="$ROOT_PART_DEV"
+        if [ "$IS_SEPARATE_BOOT" -eq 1 ] && [ -n "$BOOT_UUID" ]; then
+            SEP_BOOT_DEV=$(blkid -U "$BOOT_UUID" 2>/dev/null || findfs UUID="$BOOT_UUID" 2>/dev/null || true)
+            [ -b "$SEP_BOOT_DEV" ] && BOOT_PART_DEV="$SEP_BOOT_DEV"
+        fi
+
+        if [ -n "$BOOT_PART_DEV" ]; then
+            if command -v lsblk >/dev/null 2>&1; then
+                PK=$(lsblk -no PKNAME "$BOOT_PART_DEV" 2>/dev/null || true)
+                [ -n "$PK" ] && [ -b "/dev/$PK" ] && TARGET_DISK="/dev/$PK"
+                BOOT_PART_NUM=$(lsblk -no PARTN "$BOOT_PART_DEV" 2>/dev/null || true)
+            fi
+            if [ -z "$TARGET_DISK" ] || [ -z "$BOOT_PART_NUM" ]; then
+                if [[ "$BOOT_PART_DEV" =~ ^(/dev/[a-zA-Z]+)([0-9]+)$ ]]; then
+                    [ -z "$TARGET_DISK" ] && TARGET_DISK="${BASH_REMATCH[1]}"
+                    [ -z "$BOOT_PART_NUM" ] && BOOT_PART_NUM="${BASH_REMATCH[2]}"
+                elif [[ "$BOOT_PART_DEV" =~ ^(/dev/[a-zA-Z0-9]+)p([0-9]+)$ ]]; then
+                    [ -z "$TARGET_DISK" ] && TARGET_DISK="${BASH_REMATCH[1]}"
+                    [ -z "$BOOT_PART_NUM" ] && BOOT_PART_NUM="${BASH_REMATCH[2]}"
+                fi
+            fi
+        fi
+
+        if [ -z "$TARGET_DISK" ] || [ ! -b "$TARGET_DISK" ]; then
+            for d in /dev/vda /dev/sda /dev/sdb /dev/sdc /dev/nvme0n1; do
+                [ -b "$d" ] && { TARGET_DISK="$d"; break; }
+            done
+        fi
+
+        # Installation de GRUB BIOS (i386-pc) AVANT grub2-mkconfig sur les systèmes BIOS / Legacy
+        if [ ! -d /sys/firmware/efi ] && ! grep -q '/boot/efi' /etc/fstab 2>/dev/null; then
+            echo "-> Système BIOS / Legacy x86_64 détecté (disque: ${TARGET_DISK:-inconnu}, partition boot: ${BOOT_PART_DEV:-inconnue})..."
+            if [ -n "$TARGET_DISK" ] && [ -b "$TARGET_DISK" ]; then
+                PTTYPE=$(blkid -s PTTYPE -o value "$TARGET_DISK" 2>/dev/null || true)
+                echo "-> Table de partitions détectée sur $TARGET_DISK : ${PTTYPE:-inconnue}"
+
+                # Sur MBR (msdos), activer le drapeau bootable (0x80) exigé par de nombreux BIOS Legacy
+                if [ "$PTTYPE" = "dos" ] && [ -n "$BOOT_PART_NUM" ]; then
+                    echo "-> Activation du drapeau bootable MBR (0x80) sur $TARGET_DISK partition $BOOT_PART_NUM..."
+                    if command -v sfdisk >/dev/null 2>&1; then
+                        sfdisk --activate "$TARGET_DISK" "$BOOT_PART_NUM" 2>&1 || true
+                    fi
+                    if command -v parted >/dev/null 2>&1; then
+                        parted -s "$TARGET_DISK" set "$BOOT_PART_NUM" boot on 2>&1 || true
+                    fi
+                fi
+
+                # Supprimer tout device.map obsolète du Live avant l'installation GRUB BIOS
+                rm -f /boot/grub2/device.map 2>/dev/null || true
+
+                GRUB_INSTALL_BIN="grub2-install"
+                [ -x /usr/sbin/grub2-install.orig ] && GRUB_INSTALL_BIN="/usr/sbin/grub2-install.orig"
+                [ -x /usr/bin/grub2-install.orig ] && GRUB_INSTALL_BIN="/usr/bin/grub2-install.orig"
+
+                echo "-> Installation de GRUB BIOS (i386-pc) sur $TARGET_DISK (--boot-directory=/boot)..."
+                if ! timeout 90 "$GRUB_INSTALL_BIN" --target=i386-pc --boot-directory=/boot --recheck "$TARGET_DISK" 2>&1; then
+                    echo "WARN: grub2-install standard a échoué, nouvelle tentative avec --force..."
+                    timeout 90 "$GRUB_INSTALL_BIN" --target=i386-pc --boot-directory=/boot --recheck --force "$TARGET_DISK" 2>&1 || true
+                fi
+
+                if [ -s /boot/grub2/i386-pc/core.img ]; then
+                    echo "-> OK : /boot/grub2/i386-pc/core.img généré avec succès."
+                else
+                    echo "-> ERREUR : /boot/grub2/i386-pc/core.img absent après grub2-install !"
+                fi
+
+                # Si blscfg.mod n'est pas présent pour i386-pc, basculer sur menuentry statiques
+                if [ ! -f /boot/grub2/i386-pc/blscfg.mod ]; then
+                    echo "-> WARN : blscfg.mod absent dans /boot/grub2/i386-pc, désactivation de GRUB_ENABLE_BLSCFG..."
+                    sed -i 's/^GRUB_ENABLE_BLSCFG=.*/GRUB_ENABLE_BLSCFG=false/' /etc/default/grub 2>/dev/null || true
+                fi
+            else
+                echo "-> ERREUR : impossible de déterminer le disque cible BIOS pour grub2-install !"
+            fi
+        fi
+
         # Marquer l'environnement GRUB comme démarré avec succès
         if command -v grub2-editenv >/dev/null 2>&1; then
-            for envfile in /boot/grub2/grubenv /boot/efi/EFI/fedora/grubenv; do
+            ENV_TARGETS="/boot/grub2/grubenv"
+            if [ -d /sys/firmware/efi ] || grep -q '/boot/efi' /etc/fstab 2>/dev/null; then
+                ENV_TARGETS="$ENV_TARGETS /boot/efi/EFI/fedora/grubenv"
+            fi
+            for envfile in $ENV_TARGETS; do
                 mkdir -p "$(dirname "$envfile")" 2>/dev/null || true
                 grub2-editenv "$envfile" create 2>/dev/null || true
                 grub2-editenv "$envfile" set menu_auto_hide=1 2>/dev/null || true
@@ -639,9 +744,16 @@ PRIMARY_BLS_EOF
             done
         fi
 
-        # Génération principale de /boot/grub2/grub.cfg
-        echo "-> Génération du grub.cfg (/boot/grub2/grub.cfg)..."
-        grub2-mkconfig -o /boot/grub2/grub.cfg 2>/dev/null || true
+        # Supprimer tout grub.cfg obsolète copié depuis le Live ISO avant regénération
+        rm -f /boot/grub2/grub.cfg /boot/grub2/grub.cfg.new 2>/dev/null || true
+
+        GRUB_MKCONFIG_BIN="grub2-mkconfig"
+        [ -x /usr/sbin/grub2-mkconfig.orig ] && GRUB_MKCONFIG_BIN="/usr/sbin/grub2-mkconfig.orig"
+        [ -x /usr/bin/grub2-mkconfig.orig ] && GRUB_MKCONFIG_BIN="/usr/bin/grub2-mkconfig.orig"
+
+        # Génération principale de /boot/grub2/grub.cfg avec le vrai binaire grub2-mkconfig
+        echo "-> Génération du grub.cfg (/boot/grub2/grub.cfg) via $GRUB_MKCONFIG_BIN..."
+        "$GRUB_MKCONFIG_BIN" -o /boot/grub2/grub.cfg 2>&1 || true
 
         # Forcer timeout=0 et timeout_style=hidden dans grub.cfg généré pour un démarrage direct silencieux
         if [ -s /boot/grub2/grub.cfg ]; then
@@ -649,13 +761,17 @@ PRIMARY_BLS_EOF
             sed -i -E 's/^[[:space:]]*set timeout_style=.*/set timeout_style=hidden/g' /boot/grub2/grub.cfg 2>/dev/null || true
         fi
 
-        # SÉCURITÉ ABSOLUE : Si /boot/grub2/grub.cfg est vide ou manquant, générer le grub.cfg autonome garanti
-        if [ ! -s /boot/grub2/grub.cfg ]; then
-            echo "-> AVERTISSEMENT : grub.cfg vide, écriture du grub.cfg autonome garanti..."
-            KNAME="vmlinuz-$KVER"
-            [ -f "/boot/$KNAME" ] || KNAME=$(basename "$LATEST_KERNEL" 2>/dev/null || echo "vmlinuz")
-            INAME="initramfs-${KVER}.img"
-            [ -f "/boot/$INAME" ] || [ -z "$LATEST_INITRD" ] || INAME=$(basename "$LATEST_INITRD")
+        # Vérifier que grub.cfg est valide (non vide, contient l'UUID cible et au moins blscfg ou menuentry)
+        GRUBCFG_VALID=0
+        if [ -s /boot/grub2/grub.cfg ] && grep -qE 'blscfg|menuentry' /boot/grub2/grub.cfg; then
+            if [ -z "$BOOT_UUID" ] || grep -q "$BOOT_UUID" /boot/grub2/grub.cfg; then
+                GRUBCFG_VALID=1
+            fi
+        fi
+
+        # SÉCURITÉ ABSOLUE : Si /boot/grub2/grub.cfg est vide, incomplet ou avec un mauvais UUID, générer le grub.cfg autonome garanti
+        if [ "$GRUBCFG_VALID" -eq 0 ]; then
+            echo "-> AVERTISSEMENT : grub.cfg absent ou invalide, écriture du grub.cfg autonome garanti..."
 
             cat > /boot/grub2/grub.cfg << GRUBCFG_EOF
 set default="0"
@@ -663,12 +779,21 @@ set timeout=0
 set timeout_style=hidden
 set pager=0
 
+if [ -s \$prefix/grubenv ]; then
+  load_env
+fi
+
 function load_video {
   insmod all_video
-  insmod efi_gop
-  insmod efi_uga
-  insmod video_bochs
-  insmod video_cirrus
+  if [ "\${grub_platform}" = "efi" ]; then
+    insmod efi_gop
+    insmod efi_uga
+  else
+    insmod vbe
+    insmod vga
+    insmod video_bochs
+    insmod video_cirrus
+  fi
   insmod gfxterm
   set gfxpayload=keep
 }
@@ -681,19 +806,32 @@ insmod xfs
 insmod all_video
 insmod gfxterm
 
-search --no-floppy --fs-uuid --set=root ${TARGET_ROOT_UUID}
+search --no-floppy --fs-uuid --set=root ${BOOT_UUID}
+set boot=\$root
+set blsdir=${KERNEL_PREFIX}/loader/entries
+set kernelopts="root=UUID=${TARGET_ROOT_UUID} ro ${SILENT_CMDLINE}"
+GRUBCFG_EOF
+
+            USE_BLS_FALLBACK=1
+            if [ ! -d /sys/firmware/efi ] && [ ! -f /boot/grub2/i386-pc/blscfg.mod ]; then
+                USE_BLS_FALLBACK=0
+            fi
+            if [ ! -d /boot/loader/entries ] || [ -z "$(ls /boot/loader/entries/*.conf 2>/dev/null)" ]; then
+                USE_BLS_FALLBACK=0
+            fi
+
+            if [ "$USE_BLS_FALLBACK" -eq 1 ]; then
+                cat >> /boot/grub2/grub.cfg << 'BLS_FALLBACK_EOF'
 
 insmod blscfg
 blscfg
-GRUBCFG_EOF
-
-            # Ajouter une entrée statique de secours UNIQUEMENT s'il n'y a pas d'entrées BLS
-            if [ ! -d /boot/loader/entries ] || [ -z "$(ls /boot/loader/entries/*.conf 2>/dev/null)" ]; then
+BLS_FALLBACK_EOF
+            else
                 cat >> /boot/grub2/grub.cfg << STATIC_EOF
 
 menuentry 'Arrera Blue 2026' {
     load_video
-    search --no-floppy --fs-uuid --set=root ${TARGET_ROOT_UUID}
+    search --no-floppy --fs-uuid --set=root ${BOOT_UUID}
     linux ${KERNEL_PREFIX}/${KNAME} root=UUID=${TARGET_ROOT_UUID} ro ${SILENT_CMDLINE}
     initrd ${KERNEL_PREFIX}/${INAME}
 }
@@ -703,7 +841,7 @@ STATIC_EOF
 
 menuentry 'Arrera Blue 2026 (Rescue)' {
     load_video
-    search --no-floppy --fs-uuid --set=root ${TARGET_ROOT_UUID}
+    search --no-floppy --fs-uuid --set=root ${BOOT_UUID}
     linux ${KERNEL_PREFIX}/vmlinuz-0-rescue-${CURRENT_MACHINE_ID} root=UUID=${TARGET_ROOT_UUID} ro
     initrd ${KERNEL_PREFIX}/initramfs-0-rescue-${CURRENT_MACHINE_ID}.img
 }
@@ -712,62 +850,9 @@ RESCUE_ENTRY_EOF
             fi
         fi
 
-        # Garantir que la fonction load_video est toujours présente dans /boot/grub2/grub.cfg
+        # Garantir que la fonction load_video est toujours présente dans /boot/grub2/grub.cfg (compatible BIOS et UEFI)
         if [ -f /boot/grub2/grub.cfg ] && ! grep -q 'function load_video' /boot/grub2/grub.cfg; then
-            sed -i '1i function load_video { insmod all_video; insmod efi_gop; insmod efi_uga; insmod gfxterm; set gfxpayload=keep; }\nset pager=0' /boot/grub2/grub.cfg
-        fi
-
-        # Configuration BIOS si le système est en mode BIOS / Legacy
-        # S'assurer que /boot est bien monté s'il figure dans fstab
-        if grep -q '[[:space:]]/boot[[:space:]]' /etc/fstab 2>/dev/null; then
-            if ! mountpoint -q /boot 2>/dev/null; then
-                mount /boot 2>/dev/null || true
-            fi
-        fi
-
-        # Détection précise du disque cible (TARGET_DISK) et de la partition racine
-        TARGET_DISK=""
-        if [ -z "$ROOT_PART_DEV" ] || [ ! -b "$ROOT_PART_DEV" ]; then
-            if [ -n "$TARGET_ROOT_UUID" ]; then
-                ROOT_PART_DEV=$(blkid -U "$TARGET_ROOT_UUID" 2>/dev/null || findfs UUID="$TARGET_ROOT_UUID" 2>/dev/null || true)
-            fi
-        fi
-        if [ -z "$ROOT_PART_DEV" ] || [ ! -b "$ROOT_PART_DEV" ]; then
-            ROOT_PART_DEV=$(findmnt -n -o SOURCE / 2>/dev/null || true)
-        fi
-
-        if [ -n "$ROOT_PART_DEV" ]; then
-            if command -v lsblk >/dev/null 2>&1; then
-                PK=$(lsblk -no PKNAME "$ROOT_PART_DEV" 2>/dev/null || true)
-                [ -n "$PK" ] && [ -b "/dev/$PK" ] && TARGET_DISK="/dev/$PK"
-            fi
-            if [ -z "$TARGET_DISK" ]; then
-                if [[ "$ROOT_PART_DEV" =~ ^(/dev/[a-zA-Z]+)[0-9]+$ ]]; then
-                    TARGET_DISK="${BASH_REMATCH[1]}"
-                elif [[ "$ROOT_PART_DEV" =~ ^(/dev/[a-zA-Z0-9]+)p[0-9]+$ ]]; then
-                    TARGET_DISK="${BASH_REMATCH[1]}"
-                fi
-            fi
-        fi
-
-        if [ -z "$TARGET_DISK" ] || [ ! -b "$TARGET_DISK" ]; then
-            for d in /dev/vda /dev/sda /dev/sdb /dev/sdc /dev/nvme0n1; do
-                [ -b "$d" ] && { TARGET_DISK="$d"; break; }
-            done
-        fi
-
-        # Installation de GRUB BIOS (i386-pc) pour garantir le démarrage en mode BIOS / Legacy (MBR)
-        if [ -n "$TARGET_DISK" ] && [ -b "$TARGET_DISK" ]; then
-            echo "-> Installation de GRUB BIOS (i386-pc) sur $TARGET_DISK..."
-
-            GRUB_INSTALL_BIN="grub2-install"
-            [ -x /usr/sbin/grub2-install.orig ] && GRUB_INSTALL_BIN="/usr/sbin/grub2-install.orig"
-            [ -x /usr/bin/grub2-install.orig ] && GRUB_INSTALL_BIN="/usr/bin/grub2-install.orig"
-
-            timeout 90 $GRUB_INSTALL_BIN --target=i386-pc --recheck --force "$TARGET_DISK" 2>&1 || {
-                echo "WARN: grub2-install --force a échoué, nouvelle tentative standard..."
-                timeout 90 $GRUB_INSTALL_BIN --target=i386-pc --recheck "$TARGET_DISK" 2>&1 || true
-            }
+            sed -i '1i function load_video { insmod all_video; if [ "${grub_platform}" = "efi" ]; then insmod efi_gop; insmod efi_uga; else insmod vbe; insmod vga; fi; insmod gfxterm; set gfxpayload=keep; }\nset pager=0' /boot/grub2/grub.cfg
         fi
 
         # Configuration UEFI si UEFI détecté ou si /boot/efi est présent dans fstab
@@ -949,15 +1034,53 @@ esac
 
 sync
 
-# 4. Configuration de la cible du système installé (Graphique si GDM présent, Headless sinon)
-echo "[4/8] Configuration de la cible d'amorçage..."
-if command -v gdm >/dev/null 2>&1 || [ -f /usr/lib/systemd/system/gdm.service ]; then
-    echo "-> Environnement de bureau détecté : activation de graphical.target et GDM"
-    systemctl set-default graphical.target 2>/dev/null || ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target
-    systemctl enable gdm 2>/dev/null || ln -sf /usr/lib/systemd/system/gdm.service /etc/systemd/system/display-manager.service
-else
-    echo "-> Aucun environnement graphique détecté : activation de multi-user.target (Serveur)"
+# Détection de l'édition depuis la configuration Calamares avant nettoyage
+ED_BRANDING=""
+if [ -f /etc/calamares/settings.conf ]; then
+    ED_BRANDING=$(grep '^branding:' /etc/calamares/settings.conf 2>/dev/null | awk '{print $2}')
+fi
+
+IS_OOBE_EDITION=0
+OOBE_EDITION=""
+case "$ED_BRANDING" in
+    arrera-education)
+        IS_OOBE_EDITION=1
+        OOBE_EDITION="education"
+        ;;
+    arrera-home|arrera)
+        IS_OOBE_EDITION=1
+        OOBE_EDITION="home"
+        ;;
+esac
+
+# 4. Configuration du premier démarrage (OOBE Arrera Blue Lynx pour Home/Education, GDM/Headless sinon)
+if [ "$IS_OOBE_EDITION" -eq 1 ]; then
+    echo "[4/8] Configuration de la session OOBE de premier démarrage ($OOBE_EDITION)..."
+    mkdir -p /usr/local/bin /etc/systemd/system/multi-user.target.wants
+    if [ -f /usr/bin/arrera-oobe.sh ]; then
+        cp -f /usr/bin/arrera-oobe.sh /usr/local/bin/arrera-oobe.sh
+        chmod 0755 /usr/local/bin/arrera-oobe.sh
+    fi
+    if [ -f /usr/lib/systemd/system/arrera-oobe.service ]; then
+        cp -f /usr/lib/systemd/system/arrera-oobe.service /etc/systemd/system/arrera-oobe.service
+        chmod 0644 /etc/systemd/system/arrera-oobe.service
+    fi
+    echo "$OOBE_EDITION" > /etc/arrera-oobe-edition
+
+    systemctl disable gdm 2>/dev/null || true
+    rm -f /etc/systemd/system/display-manager.service
     systemctl set-default multi-user.target 2>/dev/null || ln -sf /usr/lib/systemd/system/multi-user.target /etc/systemd/system/default.target
+    systemctl enable arrera-oobe.service 2>/dev/null || ln -sf /etc/systemd/system/arrera-oobe.service /etc/systemd/system/multi-user.target.wants/arrera-oobe.service
+else
+    echo "[4/8] Configuration de la cible d'amorçage..."
+    if command -v gdm >/dev/null 2>&1 || [ -f /usr/lib/systemd/system/gdm.service ]; then
+        echo "-> Environnement de bureau détecté : activation de graphical.target et GDM"
+        systemctl set-default graphical.target 2>/dev/null || ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target
+        systemctl enable gdm 2>/dev/null || ln -sf /usr/lib/systemd/system/gdm.service /etc/systemd/system/display-manager.service
+    else
+        echo "-> Aucun environnement graphique détecté : activation de multi-user.target (Serveur)"
+        systemctl set-default multi-user.target 2>/dev/null || ln -sf /usr/lib/systemd/system/multi-user.target /etc/systemd/system/default.target
+    fi
 fi
 
 # 5. Désactiver et supprimer définitivement le mode kiosque
@@ -971,16 +1094,46 @@ rm -f /usr/bin/arrera-installer-kiosk.sh
 echo "[6/8] Réinitialisation de la configuration de connexion GDM..."
 rm -f /etc/gdm/custom.conf
 
-# 7. Nettoyer le compte Live temporaire 'arrera' si un utilisateur a été créé
+# 7. Nettoyer le compte Live temporaire 'arrera'
 echo "[7/8] Vérification des comptes utilisateurs..."
-OTHER_USER=$(awk -F: '$3 >= 1000 && $1 != "arrera" && $1 != "nobody" && $1 != "six-mini" && $1 != "six-super" && $1 != "six-maxi" {print $1}' /etc/passwd | head -n 1)
-if [ -n "$OTHER_USER" ]; then
-    echo "-> Utilisateur principal installé détecté : $OTHER_USER"
-    echo "-> Suppression du compte temporaire live 'arrera'..."
-    pkill -9 -u arrera 2>/dev/null || true
-    userdel -r -f arrera 2>/dev/null || true
-    rm -rf /home/arrera
-    rm -f /etc/sudoers.d/arrera
+if [ "$IS_OOBE_EDITION" -eq 1 ]; then
+    if id arrera >/dev/null 2>&1 || [ -d /home/arrera ] || [ -f /etc/sudoers.d/arrera ]; then
+        echo "-> Suppression du compte temporaire live 'arrera' (création différée vers Arrera Blue Lynx)..."
+        pkill -9 -u arrera 2>/dev/null || true
+        userdel -r -f arrera 2>/dev/null || true
+        rm -rf /home/arrera
+        rm -f /etc/sudoers.d/arrera
+    fi
+else
+    OTHER_USER=$(awk -F: '$3 >= 1000 && $1 != "arrera" && $1 != "nobody" {print $1}' /etc/passwd | head -n 1)
+    if [ -n "$OTHER_USER" ]; then
+        echo "-> Utilisateur principal installé détecté : $OTHER_USER"
+        echo "-> Suppression du compte temporaire live 'arrera'..."
+        pkill -9 -u arrera 2>/dev/null || true
+        userdel -r -f arrera 2>/dev/null || true
+        rm -rf /home/arrera
+        rm -f /etc/sudoers.d/arrera
+    fi
+fi
+
+# 7b. Configuration garantie du nom d'hôte (hostname) selon l'édition
+TARGET_HOSTNAME=""
+if [ "$ED_BRANDING" = "arrera-education" ] || grep -q "^parents:" /etc/passwd 2>/dev/null; then
+    TARGET_HOSTNAME="arrera-school"
+elif [ "$ED_BRANDING" = "arrera-home" ] || [ "$ED_BRANDING" = "arrera" ]; then
+    TARGET_HOSTNAME="arrera"
+fi
+
+if [ -n "$TARGET_HOSTNAME" ]; then
+    echo "-> Configuration officielle du nom d'hôte ($TARGET_HOSTNAME)..."
+    echo "$TARGET_HOSTNAME" > /etc/hostname
+    if [ -f /etc/hosts ]; then
+        sed -i "/127.0.1.1/d" /etc/hosts 2>/dev/null || true
+        echo "127.0.1.1 $TARGET_HOSTNAME" >> /etc/hosts
+    fi
+    if command -v hostnamectl >/dev/null 2>&1; then
+        hostnamectl set-hostname "$TARGET_HOSTNAME" 2>/dev/null || true
+    fi
 fi
 
 # 8. Désinstallation de Calamares et des outils Live, application des réglages finaux
@@ -991,8 +1144,18 @@ rm -f /etc/xdg/autostart/install-*.desktop 2>/dev/null || true
 rm -f /usr/share/applications/calamares*.desktop 2>/dev/null || true
 
 # Désinstaller proprement les paquets de l'installateur du système cible
-echo "-> Désinstallation des paquets calamares, arrera-installer, cage et gnome-extensions-app..."
-rpm -e --nodeps calamares arrera-installer arrera-installer-home arrera-installer-education arrera-installer-enterprise arrera-installer-server cage gnome-extensions-app 2>/dev/null || true
+if [ "$IS_OOBE_EDITION" -eq 1 ]; then
+    echo "-> Désinstallation de calamares et arrera-installer (conservation de cage pour OOBE)..."
+    REMOVE_PKGS=(calamares arrera-installer-home arrera-installer-education arrera-installer gnome-extensions-app)
+else
+    echo "-> Désinstallation des paquets calamares, arrera-installer et cage..."
+    REMOVE_PKGS=(calamares arrera-installer-enterprise arrera-installer-server arrera-installer cage gnome-extensions-app)
+fi
+for pkg in "${REMOVE_PKGS[@]}"; do
+    if rpm -q "$pkg" >/dev/null 2>&1; then
+        rpm -e --nodeps "$pkg" 2>/dev/null || true
+    fi
+done
 
 # Sur ARM64, purger les paquets d'amorçage du média Live ISO (grub2/shim) pour conserver un système 100% systemd-boot
 if [ "$TARGET_ARCH" = "aarch64" ] || [ "$TARGET_ARCH" = "arm64" ]; then
@@ -1002,7 +1165,11 @@ if [ "$TARGET_ARCH" = "aarch64" ] || [ "$TARGET_ARCH" = "arm64" ]; then
 fi
 
 # Suppression des résidus et caches Calamares
-rm -f /usr/bin/calamares /usr/bin/cage /usr/bin/arrera-installer-kiosk.sh /etc/systemd/system/arrera-kiosk.service 2>/dev/null || true
+rm -rf /etc/calamares /usr/share/calamares /usr/lib64/calamares /usr/lib/calamares 2>/dev/null || true
+rm -f /usr/bin/calamares /usr/bin/arrera-installer-kiosk.sh /etc/systemd/system/arrera-kiosk.service 2>/dev/null || true
+if [ "$IS_OOBE_EDITION" -eq 0 ]; then
+    rm -f /usr/bin/cage 2>/dev/null || true
+fi
 rm -f /usr/bin/arrera-calamares-sanitize.sh 2>/dev/null || true
 rm -rf /etc/systemd/system/arrera-kiosk.service.d 2>/dev/null || true
 
@@ -1081,7 +1248,6 @@ sequence:
       - locale
       - keyboard
       - partition
-      - users
       - packagechooser@installmode
       - summary
   - exec:
@@ -1093,7 +1259,6 @@ sequence:
       - locale
       - keyboard
       - localecfg
-      - users
       - networkcfg
       - hwclock
       - services-systemd
@@ -1113,7 +1278,7 @@ quit-at-end: false
 CALAMARES_SETTINGS_CONF
 fi
 
-# 4. Service de secours au premier démarrage sur disque dur
+# 4. Service de secours au premier démarrage sur disque dur (inactif si l'OOBE Arrera Blue Lynx est programmé)
 cat > /etc/systemd/system/arrera-postinstall-fallback.service << 'FALLBACK_SERVICE_EOF'
 [Unit]
 Description=Arrera Linux First Boot Finalizer
@@ -1122,6 +1287,8 @@ After=local-fs.target
 Before=gdm.service display-manager.service
 ConditionKernelCommandLine=!rd.live.image
 ConditionPathExists=!/run/initramfs/live
+ConditionPathExists=!/etc/arrera-oobe-edition
+ConditionPathExists=!/etc/systemd/system/arrera-oobe.service
 
 [Service]
 Type=oneshot

@@ -69,9 +69,19 @@ done
 for pconf in /etc/calamares/modules/partition.conf /etc/calamares/modules/partition-*.conf /usr/share/calamares/modules/partition.conf; do
     [ -f "$pconf" ] || continue
     if [ -d /sys/firmware/efi ]; then
-        sed -i -E 's/^[[:space:]]*defaultPartitionTableType:.*/defaultPartitionTableType: "gpt"/' "$pconf" 2>/dev/null || true
+        TARGET_PT="gpt"
     else
-        sed -i -E 's/^[[:space:]]*defaultPartitionTableType:.*/defaultPartitionTableType: "msdos"/' "$pconf" 2>/dev/null || true
+        TARGET_PT="msdos"
+    fi
+    if grep -qE '^[[:space:]]*defaultPartitionTableType:' "$pconf"; then
+        sed -i -E "s/^[[:space:]]*defaultPartitionTableType:.*/defaultPartitionTableType: \"${TARGET_PT}\"/" "$pconf" 2>/dev/null || true
+    else
+        echo "defaultPartitionTableType: \"${TARGET_PT}\"" >> "$pconf"
+    fi
+    if grep -qE '^[[:space:]]*createHybridBootloaderLayout:' "$pconf"; then
+        sed -i -E 's/^[[:space:]]*createHybridBootloaderLayout:.*/createHybridBootloaderLayout: false/' "$pconf" 2>/dev/null || true
+    else
+        echo "createHybridBootloaderLayout: false" >> "$pconf"
     fi
 done
 exit 0
@@ -143,18 +153,23 @@ efiBootloaderId: "fedora"
 installEFIFallback: true
 CALAMARES_BOOTLOADER_CONF
 
-# Écriture de partition.conf Calamares (ESP sur /boot/efi si UEFI, MBR standard si BIOS)
+# Écriture de partition.conf Calamares (ESP sur /boot/efi si UEFI, MBR msdos standard si BIOS)
 cat > /etc/calamares/modules/partition.conf << 'CALAMARES_PARTITION_CONF'
 # Configuration du module partition pour Arrera Linux x86_64
 ---
 defaultFileSystemType: "ext4"
 availableFileSystemTypes: ["ext4", "btrfs", "xfs"]
+defaultPartitionTableType: "gpt"
+createHybridBootloaderLayout: false
 efiSystemPartition: "/boot/efi"
 efiSystemPartitionSize: 600M
 essentialMounts: [ "live-*", "control", "ventoy" ]
 lvm:
     enable: false
 CALAMARES_PARTITION_CONF
+
+# Ré-exécuter la sanitation après l'écriture de partition.conf
+/usr/bin/arrera-calamares-sanitize.sh || true
 
 echo "=== Architecture x86_64 configurée avec succès ==="
 %end
