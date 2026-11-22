@@ -12,6 +12,7 @@
 
 # Configuration et intégration dédiées saveur Home
 arrera-installer-home
+arrera-blue-lynx
 arrera-branding-home
 arrera-gnome-config-home
 
