@@ -75,6 +75,8 @@ btop
 fastfetch
 bash-completion
 abpm
+grubby
+dbus-daemon
 
 # Systèmes de fichiers et gestion du stockage (Calamares & système cible)
 e2fsprogs
@@ -85,6 +87,8 @@ lvm2
 # Python et utilitaires terminal
 python3
 python3-pip
+python3-pillow
+python3-beautifulsoup4
 chafa
 ImageMagick
 
