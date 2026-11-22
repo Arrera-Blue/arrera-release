@@ -87,9 +87,9 @@ cat > /usr/bin/arrera-postinstall.sh << 'POSTINSTALL_EOF'
 # set -e désactivé : les erreurs mineures ne doivent pas faire échouer Calamares
 set +e
 
-# Journalisation persistante de toute la sortie post-installation
+# Journalisation persistante directe (sans sous-processus tee susceptible de retenir stdout dans Calamares)
 mkdir -p /var/log
-exec > >(tee -a /var/log/arrera-postinstall.log) 2>&1
+exec >> /var/log/arrera-postinstall.log 2>&1
 
 echo "=========================================================="
 echo "   Arrera Linux - Finalisation post-installation"
@@ -130,9 +130,9 @@ DNS_EOF
 
     if [ "$IS_ONLINE" -eq 1 ]; then
         echo "-> Connexion Internet confirmée !"
-        echo "-> Rafraîchissement des dépôts et mise à jour du système..."
-        dnf makecache -y || true
-        dnf upgrade -y --refresh || true
+        echo "-> Mise à jour du système..."
+        dnf upgrade -y --refresh --setopt=timeout=15 --setopt=retries=2 || true
+        gpgconf --kill all 2>/dev/null || true
         echo "-> Système mis à jour avec succès."
     else
         echo "-> Aucune connexion Internet détectée."
@@ -171,6 +171,28 @@ if command -v plymouth-set-default-theme >/dev/null 2>&1; then
     plymouth-set-default-theme arrera 2>/dev/null || true
 fi
 
+# S'assurer que /boot est monté avant toute opération noyau/initramfs
+if grep -q '[[:space:]]/boot[[:space:]]' /etc/fstab 2>/dev/null && ! mountpoint -q /boot 2>/dev/null; then
+    mount /boot 2>/dev/null || true
+fi
+
+# Initialiser machine-id et nettoyer les anciens fichiers rescue du Live AVANT Dracut
+CURRENT_MACHINE_ID=$(cat /etc/machine-id 2>/dev/null || true)
+if [ -z "$CURRENT_MACHINE_ID" ] || [ "$CURRENT_MACHINE_ID" = "uninitialized" ]; then
+    systemd-machine-id-setup 2>/dev/null || true
+    CURRENT_MACHINE_ID=$(cat /etc/machine-id 2>/dev/null || true)
+fi
+
+if [ -n "$CURRENT_MACHINE_ID" ]; then
+    for f in /boot/*rescue*; do
+        [ -f "$f" ] || continue
+        if ! grep -q "$CURRENT_MACHINE_ID" <<< "$f"; then
+            echo "-> Suppression rescue obsolète du Live : $(basename "$f")"
+            rm -f "$f"
+        fi
+    done
+fi
+
 # Identifier le dernier noyau installé et extraire précisément sa version (KVER)
 LATEST_KERNEL=$(ls -v /usr/lib/modules/*/vmlinuz /boot/vmlinuz-* 2>/dev/null | grep -v 'rescue' | tail -n 1 || true)
 KVER=""
@@ -182,13 +204,11 @@ fi
 [ -z "$KVER" ] && KVER=$(uname -r 2>/dev/null || true)
 [ -n "$LATEST_KERNEL" ] && echo "-> Dernier noyau détecté : $LATEST_KERNEL (version: $KVER)"
 
-if command -v dracut >/dev/null 2>&1; then
-    echo "-> Régénération complète de l'initramfs avec Dracut et le thème Arrera..."
-    dracut --regenerate-all --force --add plymouth 2>/dev/null || {
-        if [ -n "$KVER" ]; then
-            dracut -f --add plymouth "/boot/initramfs-${KVER}.img" "$KVER" 2>/dev/null || true
-        fi
-    }
+# Régénérer uniquement l'initramfs du dernier noyau cible ($KVER) au lieu de --regenerate-all
+if command -v dracut >/dev/null 2>&1 && [ -n "$KVER" ]; then
+    echo "-> Génération de l'initramfs pour le noyau $KVER avec Dracut et le thème Arrera..."
+    dracut -f --add plymouth --kver "$KVER" "/boot/initramfs-${KVER}.img" 2>&1 || \
+        dracut -f --kver "$KVER" "/boot/initramfs-${KVER}.img" 2>&1 || true
 fi
 
 # ------------------------------------------------------------------------------
@@ -198,9 +218,6 @@ fi
 # notamment pour un noyau ajouté par 'dnf upgrade'). Sans cette copie, GRUB affiche :
 #   "file '/boot/vmlinuz-<kver>' not found" (alors que le rescue, copié lui, démarre).
 # ------------------------------------------------------------------------------
-if grep -q '[[:space:]]/boot[[:space:]]' /etc/fstab 2>/dev/null && ! mountpoint -q /boot 2>/dev/null; then
-    mount /boot 2>/dev/null || true
-fi
 
 if [ -n "$KVER" ]; then
     KMODDIR="/usr/lib/modules/${KVER}"
@@ -536,18 +553,12 @@ GRUB_DEFAULT_EOF
             RESCUE_BLS="/boot/loader/entries/${CURRENT_MACHINE_ID}-0-rescue.conf"
 
             if [ ! -f "$RESCUE_VMLINUZ" ] || [ ! -f "$RESCUE_INITRD" ]; then
-                echo "-> Génération du rescue Fedora pour la machine $CURRENT_MACHINE_ID..."
-                if [ -x /usr/lib/kernel/install.d/51-dracut-rescue.install ]; then
-                    /usr/lib/kernel/install.d/51-dracut-rescue.install add "$KVER" "/boot" "$LATEST_KERNEL" 2>/dev/null || true
-                elif [ -x /usr/lib/kernel/install.d/50-dracut-rescue.install ]; then
-                    /usr/lib/kernel/install.d/50-dracut-rescue.install add "$KVER" "/boot" "$LATEST_KERNEL" 2>/dev/null || true
-                fi
-
+                echo "-> Génération unique du rescue Fedora pour la machine $CURRENT_MACHINE_ID..."
                 if [ ! -f "$RESCUE_VMLINUZ" ]; then
                     cp -f "$LATEST_KERNEL" "$RESCUE_VMLINUZ" 2>/dev/null || true
                 fi
                 if [ ! -f "$RESCUE_INITRD" ] && command -v dracut >/dev/null 2>&1; then
-                    dracut -f --no-hostonly -a "rescue" --kver "$KVER" "$RESCUE_INITRD" 2>/dev/null || true
+                    dracut -f --no-hostonly -a "rescue" --kver "$KVER" "$RESCUE_INITRD" 2>&1 || true
                 fi
             fi
 
