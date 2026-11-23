@@ -130,10 +130,12 @@ DNS_EOF
 
     if [ "$IS_ONLINE" -eq 1 ]; then
         echo "-> Connexion Internet confirmée !"
-        echo "-> Mise à jour du système..."
-        dnf upgrade -y --refresh --setopt=timeout=15 --setopt=retries=2 || true
+        echo "-> Mise à jour rapide des composants Arrera..."
+        dnf upgrade -y --disablerepo="*" --enablerepo="*arrera*" \
+            --setopt=timeout=10 --setopt=retries=2 \
+            "arrera-*" "blue-*" "abpm" "gnome-shell-extension-arrera-*" || true
         gpgconf --kill all 2>/dev/null || true
-        echo "-> Système mis à jour avec succès."
+        echo "-> Composants Arrera mis à jour avec succès."
     else
         echo "-> Aucune connexion Internet détectée."
         echo "-> Étape réseau ignorée : installation locale directe."
@@ -204,10 +206,11 @@ fi
 [ -z "$KVER" ] && KVER=$(uname -r 2>/dev/null || true)
 [ -n "$LATEST_KERNEL" ] && echo "-> Dernier noyau détecté : $LATEST_KERNEL (version: $KVER)"
 
-# Régénérer uniquement l'initramfs du dernier noyau cible ($KVER) au lieu de --regenerate-all
+# Régénérer uniquement l'initramfs du dernier noyau cible ($KVER) en mode --hostonly rapide
 if command -v dracut >/dev/null 2>&1 && [ -n "$KVER" ]; then
-    echo "-> Génération de l'initramfs pour le noyau $KVER avec Dracut et le thème Arrera..."
-    dracut -f --add plymouth --kver "$KVER" "/boot/initramfs-${KVER}.img" 2>&1 || \
+    echo "-> Génération rapide de l'initramfs (--hostonly) pour le noyau $KVER..."
+    dracut -f --hostonly --add plymouth --kver "$KVER" "/boot/initramfs-${KVER}.img" 2>&1 || \
+        dracut -f --add plymouth --kver "$KVER" "/boot/initramfs-${KVER}.img" 2>&1 || \
         dracut -f --kver "$KVER" "/boot/initramfs-${KVER}.img" 2>&1 || true
 fi
 
@@ -501,8 +504,20 @@ ENTRY_EOF
         # ==============================================================================
         echo "-> [x86_64] Configuration de GRUB2 pour démarrage UEFI et BIOS..."
 
+        # Détecter le mode d'amorçage (UEFI vs BIOS Legacy)
+        # En BIOS Legacy, on désactive BLSCFG pour générer de vrais blocs 'menuentry' directs dans /boot/grub2/grub.cfg
+        IS_UEFI_SYSTEM=0
+        if [ -d /sys/firmware/efi ] || grep -q '/boot/efi' /etc/fstab 2>/dev/null; then
+            IS_UEFI_SYSTEM=1
+        fi
+        if [ "$IS_UEFI_SYSTEM" -eq 1 ]; then
+            GRUB_BLSCFG_VAL="true"
+        else
+            GRUB_BLSCFG_VAL="false"
+        fi
+
         mkdir -p /etc/default
-        cat > /etc/default/grub << 'GRUB_DEFAULT_EOF'
+        cat > /etc/default/grub << GRUB_DEFAULT_EOF
 GRUB_TIMEOUT=0
 GRUB_TIMEOUT_STYLE=hidden
 GRUB_RECORDFAIL_TIMEOUT=0
@@ -512,7 +527,7 @@ GRUB_DISABLE_SUBMENU=true
 GRUB_TERMINAL_OUTPUT="console"
 GRUB_CMDLINE_LINUX="rhgb quiet splash loglevel=3 rd.udev.log_priority=3 systemd.show_status=false vt.global_cursor_default=0"
 GRUB_DISABLE_RECOVERY=false
-GRUB_ENABLE_BLSCFG=true
+GRUB_ENABLE_BLSCFG=${GRUB_BLSCFG_VAL}
 GRUB_DEFAULT_KEYMAP="fr"
 GRUB_THEME=""
 GRUB_BACKGROUND=""
@@ -553,12 +568,14 @@ GRUB_DEFAULT_EOF
             RESCUE_BLS="/boot/loader/entries/${CURRENT_MACHINE_ID}-0-rescue.conf"
 
             if [ ! -f "$RESCUE_VMLINUZ" ] || [ ! -f "$RESCUE_INITRD" ]; then
-                echo "-> Génération unique du rescue Fedora pour la machine $CURRENT_MACHINE_ID..."
+                echo "-> Création rapide du rescue Fedora pour la machine $CURRENT_MACHINE_ID..."
                 if [ ! -f "$RESCUE_VMLINUZ" ]; then
-                    cp -f "$LATEST_KERNEL" "$RESCUE_VMLINUZ" 2>/dev/null || true
+                    cp -f "/boot/vmlinuz-${KVER}" "$RESCUE_VMLINUZ" 2>/dev/null || cp -f "$LATEST_KERNEL" "$RESCUE_VMLINUZ" 2>/dev/null || true
                 fi
-                if [ ! -f "$RESCUE_INITRD" ] && command -v dracut >/dev/null 2>&1; then
-                    dracut -f --no-hostonly -a "rescue" --kver "$KVER" "$RESCUE_INITRD" 2>&1 || true
+                if [ ! -f "$RESCUE_INITRD" ] && [ -s "/boot/initramfs-${KVER}.img" ]; then
+                    cp -f "/boot/initramfs-${KVER}.img" "$RESCUE_INITRD" 2>/dev/null || true
+                elif [ ! -f "$RESCUE_INITRD" ] && command -v dracut >/dev/null 2>&1; then
+                    dracut -f --hostonly --kver "$KVER" "$RESCUE_INITRD" 2>&1 || true
                 fi
             fi
 
@@ -772,11 +789,17 @@ PRIMARY_BLS_EOF
             sed -i -E 's/^[[:space:]]*set timeout_style=.*/set timeout_style=hidden/g' /boot/grub2/grub.cfg 2>/dev/null || true
         fi
 
-        # Vérifier que grub.cfg est valide (non vide, contient l'UUID cible et au moins blscfg ou menuentry)
+        # Vérifier que grub.cfg est valide (non vide, contient l'UUID cible et menuentry en BIOS ou blscfg/menuentry en UEFI)
         GRUBCFG_VALID=0
-        if [ -s /boot/grub2/grub.cfg ] && grep -qE 'blscfg|menuentry' /boot/grub2/grub.cfg; then
-            if [ -z "$BOOT_UUID" ] || grep -q "$BOOT_UUID" /boot/grub2/grub.cfg; then
-                GRUBCFG_VALID=1
+        if [ -s /boot/grub2/grub.cfg ]; then
+            if [ "$IS_UEFI_SYSTEM" -eq 0 ]; then
+                if grep -q 'menuentry ' /boot/grub2/grub.cfg && { [ -z "$BOOT_UUID" ] || grep -q "$BOOT_UUID" /boot/grub2/grub.cfg; }; then
+                    GRUBCFG_VALID=1
+                fi
+            else
+                if grep -qE 'blscfg|menuentry' /boot/grub2/grub.cfg && { [ -z "$BOOT_UUID" ] || grep -q "$BOOT_UUID" /boot/grub2/grub.cfg; }; then
+                    GRUBCFG_VALID=1
+                fi
             fi
         fi
 
@@ -824,7 +847,8 @@ set kernelopts="root=UUID=${TARGET_ROOT_UUID} ro ${SILENT_CMDLINE}"
 GRUBCFG_EOF
 
             USE_BLS_FALLBACK=1
-            if [ ! -d /sys/firmware/efi ] && [ ! -f /boot/grub2/i386-pc/blscfg.mod ]; then
+            if [ "$IS_UEFI_SYSTEM" -eq 0 ]; then
+                # En BIOS Legacy, toujours privilégier des entrées menuentry directes et autonomes
                 USE_BLS_FALLBACK=0
             fi
             if [ ! -d /boot/loader/entries ] || [ -z "$(ls /boot/loader/entries/*.conf 2>/dev/null)" ]; then

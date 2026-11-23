@@ -39,7 +39,7 @@ Même après suppression du `dnf makecache` et de `dracut --regenerate-all`, deu
 ## 🛠️ 2. Checklist détaillée des modifications à effectuer dans `arrera-release`
 
 ### Tâche 1 : Optimiser l'étape 91 % (~20-30 secondes) dans `kickstarts/base/installer.ks`
-- [ ] **1.1. Remplacer la mise à jour DNF globale par une mise à jour ciblée sur le Copr Arrera (lignes 131-137)** :
+- [x] **1.1. Remplacer la mise à jour DNF globale par une mise à jour ciblée sur le Copr Arrera (lignes 131-137)** :
   - Ne rafraîchir et ne mettre à jour en mode `online` **que** les paquets Arrera depuis le dépôt Copr (`--disablerepo="*" --enablerepo="*arrera*"`), ce qui évite d'interroger `rpmsphere` (GitHub) et les dépôts Fedora/RPM Fusion pendant Calamares :
   ```bash
   if [ "$IS_ONLINE" -eq 1 ]; then
@@ -52,7 +52,7 @@ Même après suppression du `dnf makecache` et de `dracut --regenerate-all`, deu
       echo "-> Composants Arrera mis à jour avec succès."
   fi
   ```
-- [ ] **1.2. Générer l'initramfs principal en mode `--hostonly` rapide (ligne 211)** :
+- [x] **1.2. Générer l'initramfs principal en mode `--hostonly` rapide (ligne 211)** :
   ```bash
   if command -v dracut >/dev/null 2>&1 && [ -n "$KVER" ]; then
       echo "-> Génération rapide de l'initramfs (--hostonly) pour le noyau $KVER..."
@@ -60,7 +60,7 @@ Même après suppression du `dnf makecache` et de `dracut --regenerate-all`, deu
           dracut -f --add plymouth --kver "$KVER" "/boot/initramfs-${KVER}.img" 2>&1 || true
   fi
   ```
-- [ ] **1.3. Remplacer le lent `dracut -f --no-hostonly -a "rescue"` par une copie directe de l'initramfs principal sur `x86_64` (lignes 555-563)** :
+- [x] **1.3. Remplacer le lent `dracut -f --no-hostonly -a "rescue"` par une copie directe de l'initramfs principal sur `x86_64` (lignes 555-563)** :
   - Au lieu de passer 3 minutes à recompiler une image `--no-hostonly` de 200 Mo à 91 %, copier directement `/boot/initramfs-${KVER}.img` vers `/boot/initramfs-0-rescue-${CURRENT_MACHINE_ID}.img` :
   ```bash
   if [ ! -f "$RESCUE_VMLINUZ" ]; then
@@ -75,7 +75,7 @@ Même après suppression du `dnf makecache` et de `dracut --regenerate-all`, deu
 ---
 
 ### Tâche 2 : Garantir le démarrage BIOS Legacy (`x86_64`) dans `kickstarts/base/installer.ks`
-- [ ] **2.1. Désactiver `GRUB_ENABLE_BLSCFG` uniquement en mode BIOS Legacy (lignes 498-518)** :
+- [x] **2.1. Désactiver `GRUB_ENABLE_BLSCFG` uniquement en mode BIOS Legacy (lignes 498-518)** :
   - Détecter si le système cible est UEFI ou BIOS Legacy :
   ```bash
   IS_UEFI_SYSTEM=0
@@ -92,11 +92,11 @@ Même après suppression du `dnf makecache` et de `dracut --regenerate-all`, deu
   - Ainsi :
     - En **UEFI** (`IS_UEFI_SYSTEM=1`) : conserve `GRUB_ENABLE_BLSCFG=true` (comportement actuel Fedora UEFI inchangé).
     - En **BIOS Legacy** (`IS_UEFI_SYSTEM=0`) : passe à `GRUB_ENABLE_BLSCFG=false` pour que `grub2-mkconfig.orig` écrive directement les blocs `menuentry` classiques dans `/boot/grub2/grub.cfg`.
-- [ ] **2.2. En mode BIOS Legacy, forcer l'écriture des `menuentry` statiques si `grub2-mkconfig` n'en a pas généré (lignes 775-862)** :
+- [x] **2.2. En mode BIOS Legacy, forcer l'écriture des `menuentry` statiques si `grub2-mkconfig` n'en a pas généré (lignes 775-862)** :
   - Lors de la vérification de `/boot/grub2/grub.cfg` :
     - En BIOS (`IS_UEFI_SYSTEM=0`), exiger la présence d'un vrai `menuentry` (`grep -q 'menuentry ' /boot/grub2/grub.cfg`) et de `$BOOT_UUID`.
     - Dans le fallback `/boot/grub2/grub.cfg`, si `IS_UEFI_SYSTEM=0`, écrire systématiquement les blocs `menuentry 'Arrera Blue 2026'` et `menuentry 'Arrera Blue 2026 (Rescue)'` directs (sans passer par `blscfg`).
-- [ ] **2.3. Conserver l'activation du drapeau bootable MBR (`0x80`) et `grub2-install --target=i386-pc --boot-directory=/boot` (lignes 695-740)** :
+- [x] **2.3. Conserver l'activation du drapeau bootable MBR (`0x80`) et `grub2-install --target=i386-pc --boot-directory=/boot` (lignes 695-740)** :
   - Déjà en place dans `kickstarts/base/installer.ks` et `kickstarts/arch/x86_64.ks` (`defaultPartitionTableType: "msdos"` en BIOS).
 
 ---
