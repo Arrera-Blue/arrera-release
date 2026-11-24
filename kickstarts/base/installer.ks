@@ -95,6 +95,32 @@ echo "=========================================================="
 echo "   Arrera Linux - Finalisation post-installation"
 echo "=========================================================="
 
+# 0. Montage garanti des systèmes de fichiers virtuels (/proc, /sys, /dev, /dev/pts) dans le chroot Calamares
+# Sans devtmpfs sur /dev dans le chroot, /dev/vda, /dev/sda, /dev/nvme0n1 sont absents et grub2-install échoue en BIOS.
+MOUNTED_PROC=0
+MOUNTED_SYS=0
+MOUNTED_DEV=0
+MOUNTED_PTS=0
+MOUNTED_EFIVARS=0
+
+mkdir -p /proc /sys /dev /dev/pts /run
+if [ ! -e /proc/mounts ]; then
+    mount -t proc proc /proc 2>/dev/null && MOUNTED_PROC=1 || true
+fi
+if [ ! -d /sys/block ]; then
+    mount -t sysfs sysfs /sys 2>/dev/null && MOUNTED_SYS=1 || true
+fi
+if [ ! -b /dev/vda ] && [ ! -b /dev/sda ] && [ ! -b /dev/nvme0n1 ] && [ ! -b /dev/mmcblk0 ]; then
+    mount -t devtmpfs devtmpfs /dev 2>/dev/null && MOUNTED_DEV=1 || true
+fi
+mkdir -p /dev/pts
+if ! mountpoint -q /dev/pts 2>/dev/null; then
+    mount -t devpts devpts /dev/pts 2>/dev/null && MOUNTED_PTS=1 || true
+fi
+if [ -d /sys/firmware/efi ] && ! mountpoint -q /sys/firmware/efi/efivars 2>/dev/null; then
+    mount -t efivarfs efivarfs /sys/firmware/efi/efivars 2>/dev/null && MOUNTED_EFIVARS=1 || true
+fi
+
 # 1. Vérification réseau et mise à jour DNF selon le mode choisi (online ou offline)
 echo "[1/8] Test de la connectivité Internet..."
 
@@ -1131,6 +1157,8 @@ if [ "$IS_OOBE_EDITION" -eq 1 ]; then
     mkdir -p /usr/local/bin /etc/systemd/system/multi-user.target.wants
     if [ -f /usr/bin/arrera-oobe.sh ]; then
         cp -f /usr/bin/arrera-oobe.sh /usr/local/bin/arrera-oobe.sh
+        # Passer --windowed sous Cage : Cage met déjà toute fenêtre en plein écran et évite le crash wlroots Assertion 'surface->initialized' failed
+        sed -i -E 's|cage -s -- "\$OOBE_BIN"([[:space:]]*)$|cage -s -- "$OOBE_BIN" --windowed\1|g' /usr/local/bin/arrera-oobe.sh 2>/dev/null || true
         chmod 0755 /usr/local/bin/arrera-oobe.sh
     fi
     if [ -f /usr/lib/systemd/system/arrera-oobe.service ]; then
@@ -1266,6 +1294,14 @@ echo "=========================================================="
 echo "   Système Arrera installé avec succès et prêt !"
 echo "=========================================================="
 sync
+
+# Démontage propre des systèmes de fichiers virtuels montés en début de script
+[ "${MOUNTED_EFIVARS:-0}" -eq 1 ] && umount -l /sys/firmware/efi/efivars 2>/dev/null || true
+[ "${MOUNTED_PTS:-0}" -eq 1 ] && umount -l /dev/pts 2>/dev/null || true
+[ "${MOUNTED_DEV:-0}" -eq 1 ] && umount -l /dev 2>/dev/null || true
+[ "${MOUNTED_SYS:-0}" -eq 1 ] && umount -l /sys 2>/dev/null || true
+[ "${MOUNTED_PROC:-0}" -eq 1 ] && umount -l /proc 2>/dev/null || true
+
 exit 0
 POSTINSTALL_EOF
 
