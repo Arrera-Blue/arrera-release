@@ -70,8 +70,8 @@ polkit.addRule(function(action, subject) {
 });
 POLKIT_CALAMARES_EOF
 
-# S'assurer qu'aucun autologin GDM résiduel n'est configuré
-rm -f /etc/gdm/custom.conf
+# S'assurer qu'aucun autologin GDM résiduel n'est configuré et purger tout /etc/kernel/cmdline de la VM de build
+rm -f /etc/gdm/custom.conf /etc/kernel/cmdline /etc/cmdline /etc/cmdline.d/*.conf 2>/dev/null || true
 
 # ================================================================
 # Configuration Calamares pour finaliser le système installé
@@ -178,6 +178,52 @@ if grep -q '[[:space:]]/boot[[:space:]]' /etc/fstab 2>/dev/null && ! mountpoint 
     mount /boot 2>/dev/null || true
 fi
 
+# Ligne de commande silencieuse officielle Arrera
+SILENT_CMDLINE="rhgb quiet splash loglevel=3 rd.udev.log_priority=3 systemd.show_status=false vt.global_cursor_default=0"
+
+# Détermination de l'UUID et du périphérique de la racine AVANT Dracut (évite d'embarquer le root LVM de la VM de build !)
+TARGET_ROOT_UUID=""
+ROOT_PART_DEV=""
+if [ -f /etc/fstab ]; then
+    ROOT_FSTAB_LINE=$(awk '$2 == "/" {print $1}' /etc/fstab | head -n 1)
+    if [[ "$ROOT_FSTAB_LINE" =~ ^UUID=(.*) ]]; then
+        TARGET_ROOT_UUID="${BASH_REMATCH[1]}"
+        ROOT_PART_DEV=$(findfs UUID="$TARGET_ROOT_UUID" 2>/dev/null || true)
+    elif [ -b "$ROOT_FSTAB_LINE" ]; then
+        ROOT_PART_DEV="$ROOT_FSTAB_LINE"
+        TARGET_ROOT_UUID=$(blkid -s UUID -o value "$ROOT_PART_DEV" 2>/dev/null || true)
+    fi
+fi
+if [ -z "$TARGET_ROOT_UUID" ]; then
+    TARGET_ROOT_DEV=$(findmnt -n -o SOURCE / 2>/dev/null || true)
+    TARGET_ROOT_DEV="${TARGET_ROOT_DEV%%\[*}"
+    if [ -b "$TARGET_ROOT_DEV" ]; then
+        ROOT_PART_DEV="$TARGET_ROOT_DEV"
+        TARGET_ROOT_UUID=$(blkid -s UUID -o value "$TARGET_ROOT_DEV" 2>/dev/null || true)
+    fi
+fi
+if [ -z "$TARGET_ROOT_UUID" ]; then
+    for p in /dev/vda* /dev/sda* /dev/nvme0n1p*; do
+        [ -b "$p" ] || continue
+        case "$p" in *[0-9]) ;; *) continue ;; esac
+        FSTYPE=$(blkid -s TYPE -o value "$p" 2>/dev/null || true)
+        case "$FSTYPE" in
+            ext4|btrfs|xfs)
+                TARGET_ROOT_UUID=$(blkid -s UUID -o value "$p" 2>/dev/null || true)
+                ROOT_PART_DEV="$p"
+                [ -n "$TARGET_ROOT_UUID" ] && break
+                ;;
+        esac
+    done
+fi
+ROOT_PARAM="root=UUID=${TARGET_ROOT_UUID}"
+echo "-> Racine cible UUID: $TARGET_ROOT_UUID (dev: $ROOT_PART_DEV)"
+
+# Écraser immédiatement /etc/kernel/cmdline et purger tout /etc/cmdline.d hérité de la VM de compilation (ex: /dev/fedora_arrera-linux-compile/root)
+mkdir -p /etc/kernel
+echo "${ROOT_PARAM} ro ${SILENT_CMDLINE}" > /etc/kernel/cmdline
+rm -f /etc/cmdline /etc/cmdline.d/*.conf /usr/lib/kernel/cmdline 2>/dev/null || true
+
 # Initialiser machine-id et nettoyer les anciens fichiers rescue du Live AVANT Dracut
 CURRENT_MACHINE_ID=$(cat /etc/machine-id 2>/dev/null || true)
 if [ -z "$CURRENT_MACHINE_ID" ] || [ "$CURRENT_MACHINE_ID" = "uninitialized" ]; then
@@ -206,11 +252,11 @@ fi
 [ -z "$KVER" ] && KVER=$(uname -r 2>/dev/null || true)
 [ -n "$LATEST_KERNEL" ] && echo "-> Dernier noyau détecté : $LATEST_KERNEL (version: $KVER)"
 
-# Régénérer uniquement l'initramfs du dernier noyau cible ($KVER) en mode --hostonly rapide
+# Régénérer uniquement l'initramfs du dernier noyau cible ($KVER) en mode --hostonly --no-hostonly-cmdline
 if command -v dracut >/dev/null 2>&1 && [ -n "$KVER" ]; then
-    echo "-> Génération rapide de l'initramfs (--hostonly) pour le noyau $KVER..."
-    dracut -f --hostonly --add plymouth --kver "$KVER" "/boot/initramfs-${KVER}.img" 2>&1 || \
-        dracut -f --add plymouth --kver "$KVER" "/boot/initramfs-${KVER}.img" 2>&1 || \
+    echo "-> Génération rapide de l'initramfs (--hostonly --no-hostonly-cmdline) pour le noyau $KVER..."
+    dracut -f --hostonly --no-hostonly-cmdline --add plymouth --kver "$KVER" "/boot/initramfs-${KVER}.img" 2>&1 || \
+        dracut -f --no-hostonly-cmdline --add plymouth --kver "$KVER" "/boot/initramfs-${KVER}.img" 2>&1 || \
         dracut -f --kver "$KVER" "/boot/initramfs-${KVER}.img" 2>&1 || true
 fi
 
@@ -316,46 +362,6 @@ for f_osrel in /usr/share/arrera-branding*/os-release; do
         break
     fi
 done
-
-# Ligne de commande silencieuse officielle Arrera
-SILENT_CMDLINE="rhgb quiet splash loglevel=3 rd.udev.log_priority=3 systemd.show_status=false vt.global_cursor_default=0"
-
-# Détermination de l'UUID et du périphérique de la racine
-TARGET_ROOT_UUID=""
-ROOT_PART_DEV=""
-if [ -f /etc/fstab ]; then
-    ROOT_FSTAB_LINE=$(awk '$2 == "/" {print $1}' /etc/fstab | head -n 1)
-    if [[ "$ROOT_FSTAB_LINE" =~ ^UUID=(.*) ]]; then
-        TARGET_ROOT_UUID="${BASH_REMATCH[1]}"
-        ROOT_PART_DEV=$(findfs UUID="$TARGET_ROOT_UUID" 2>/dev/null || true)
-    elif [ -b "$ROOT_FSTAB_LINE" ]; then
-        ROOT_PART_DEV="$ROOT_FSTAB_LINE"
-        TARGET_ROOT_UUID=$(blkid -s UUID -o value "$ROOT_PART_DEV" 2>/dev/null || true)
-    fi
-fi
-if [ -z "$TARGET_ROOT_UUID" ]; then
-    TARGET_ROOT_DEV=$(findmnt -n -o SOURCE / 2>/dev/null || true)
-    if [ -b "$TARGET_ROOT_DEV" ]; then
-        ROOT_PART_DEV="$TARGET_ROOT_DEV"
-        TARGET_ROOT_UUID=$(blkid -s UUID -o value "$TARGET_ROOT_DEV" 2>/dev/null || true)
-    fi
-fi
-if [ -z "$TARGET_ROOT_UUID" ]; then
-    for p in /dev/vda* /dev/sda* /dev/nvme0n1p*; do
-        [ -b "$p" ] || continue
-        case "$p" in *[0-9]) ;; *) continue ;; esac
-        FSTYPE=$(blkid -s TYPE -o value "$p" 2>/dev/null || true)
-        case "$FSTYPE" in
-            ext4|btrfs|xfs)
-                TARGET_ROOT_UUID=$(blkid -s UUID -o value "$p" 2>/dev/null || true)
-                ROOT_PART_DEV="$p"
-                [ -n "$TARGET_ROOT_UUID" ] && break
-                ;;
-        esac
-    done
-fi
-ROOT_PARAM="root=UUID=${TARGET_ROOT_UUID}"
-echo "-> Racine cible UUID: $TARGET_ROOT_UUID (dev: $ROOT_PART_DEV)"
 
 case "$TARGET_ARCH" in
     aarch64|arm64)
@@ -504,10 +510,11 @@ ENTRY_EOF
         # ==============================================================================
         echo "-> [x86_64] Configuration de GRUB2 pour démarrage UEFI et BIOS..."
 
-        # Détecter le mode d'amorçage (UEFI vs BIOS Legacy)
+        # Détecter le mode d'amorçage (UEFI vs BIOS Legacy via /sys/firmware/efi uniquement)
         # En BIOS Legacy, on désactive BLSCFG pour générer de vrais blocs 'menuentry' directs dans /boot/grub2/grub.cfg
+        # et on active GRUB_GFXPAYLOAD_LINUX=keep pour initialiser le framebuffer VESA (simpledrm) au lieu de rester en texte 80x25
         IS_UEFI_SYSTEM=0
-        if [ -d /sys/firmware/efi ] || grep -q '/boot/efi' /etc/fstab 2>/dev/null; then
+        if [ -d /sys/firmware/efi ]; then
             IS_UEFI_SYSTEM=1
         fi
         if [ "$IS_UEFI_SYSTEM" -eq 1 ]; then
@@ -525,6 +532,8 @@ GRUB_DISTRIBUTOR="Arrera Blue 2026"
 GRUB_DEFAULT=0
 GRUB_DISABLE_SUBMENU=true
 GRUB_TERMINAL_OUTPUT="console"
+GRUB_GFXMODE="auto"
+GRUB_GFXPAYLOAD_LINUX="keep"
 GRUB_CMDLINE_LINUX="rhgb quiet splash loglevel=3 rd.udev.log_priority=3 systemd.show_status=false vt.global_cursor_default=0"
 GRUB_DISABLE_RECOVERY=false
 GRUB_ENABLE_BLSCFG=${GRUB_BLSCFG_VAL}
@@ -678,6 +687,7 @@ PRIMARY_BLS_EOF
         fi
         if [ -z "$ROOT_PART_DEV" ] || [ ! -b "$ROOT_PART_DEV" ]; then
             ROOT_PART_DEV=$(findmnt -n -o SOURCE / 2>/dev/null || true)
+            ROOT_PART_DEV="${ROOT_PART_DEV%%\[*}"
         fi
 
         BOOT_PART_DEV="$ROOT_PART_DEV"
@@ -688,9 +698,9 @@ PRIMARY_BLS_EOF
 
         if [ -n "$BOOT_PART_DEV" ]; then
             if command -v lsblk >/dev/null 2>&1; then
-                PK=$(lsblk -no PKNAME "$BOOT_PART_DEV" 2>/dev/null || true)
+                PK=$(lsblk -no PKNAME "$BOOT_PART_DEV" 2>/dev/null | head -n 1 || true)
                 [ -n "$PK" ] && [ -b "/dev/$PK" ] && TARGET_DISK="/dev/$PK"
-                BOOT_PART_NUM=$(lsblk -no PARTN "$BOOT_PART_DEV" 2>/dev/null || true)
+                BOOT_PART_NUM=$(lsblk -no PARTN "$BOOT_PART_DEV" 2>/dev/null | head -n 1 || true)
             fi
             if [ -z "$TARGET_DISK" ] || [ -z "$BOOT_PART_NUM" ]; then
                 if [[ "$BOOT_PART_DEV" =~ ^(/dev/[a-zA-Z]+)([0-9]+)$ ]]; then
@@ -709,8 +719,8 @@ PRIMARY_BLS_EOF
             done
         fi
 
-        # Installation de GRUB BIOS (i386-pc) AVANT grub2-mkconfig sur les systèmes BIOS / Legacy
-        if [ ! -d /sys/firmware/efi ] && ! grep -q '/boot/efi' /etc/fstab 2>/dev/null; then
+        # Installation de GRUB BIOS (i386-pc) AVANT grub2-mkconfig sur tous les systèmes BIOS / Legacy
+        if [ "$IS_UEFI_SYSTEM" -eq 0 ]; then
             echo "-> Système BIOS / Legacy x86_64 détecté (disque: ${TARGET_DISK:-inconnu}, partition boot: ${BOOT_PART_DEV:-inconnue})..."
             if [ -n "$TARGET_DISK" ] && [ -b "$TARGET_DISK" ]; then
                 PTTYPE=$(blkid -s PTTYPE -o value "$TARGET_DISK" 2>/dev/null || true)
@@ -725,7 +735,19 @@ PRIMARY_BLS_EOF
                     if command -v parted >/dev/null 2>&1; then
                         parted -s "$TARGET_DISK" set "$BOOT_PART_NUM" boot on 2>&1 || true
                     fi
+                elif [ "$PTTYPE" = "gpt" ]; then
+                    # Si le disque est en GPT sur un système BIOS sans partition bios_grub, créer la partition bios_grub dans l'espace 34..2047
+                    if ! sfdisk -d "$TARGET_DISK" 2>/dev/null | grep -qi '21686148-6449-6E6F-744E-656564454649'; then
+                        echo "-> Disque GPT en BIOS sans partition bios_grub : création automatique dans les secteurs 34..2047..."
+                        if command -v parted >/dev/null 2>&1; then
+                            parted -s "$TARGET_DISK" unit s mkpart bios_grub 34 2047 2>&1 || true
+                            BIOS_GRUB_PART=$(parted -ms "$TARGET_DISK" print 2>/dev/null | awk -F: '$5 == "bios_grub" || $6 == "bios_grub" {print $1}' | tail -n 1)
+                            [ -n "$BIOS_GRUB_PART" ] && parted -s "$TARGET_DISK" set "$BIOS_GRUB_PART" bios_grub on 2>&1 || true
+                        fi
+                    fi
                 fi
+
+                udevadm settle --timeout=10 2>/dev/null || true
 
                 # Supprimer tout device.map obsolète du Live avant l'installation GRUB BIOS
                 rm -f /boot/grub2/device.map 2>/dev/null || true
@@ -756,7 +778,7 @@ PRIMARY_BLS_EOF
             fi
         fi
 
-        # Marquer l'environnement GRUB comme démarré avec succès
+        # Marquer l'environnement GRUB comme démarré avec succès et fixer kernelopts sur l'UUID cible
         if command -v grub2-editenv >/dev/null 2>&1; then
             ENV_TARGETS="/boot/grub2/grubenv"
             if [ -d /sys/firmware/efi ] || grep -q '/boot/efi' /etc/fstab 2>/dev/null; then
@@ -769,6 +791,7 @@ PRIMARY_BLS_EOF
                 grub2-editenv "$envfile" set boot_success=1 2>/dev/null || true
                 grub2-editenv "$envfile" set boot_indeterminate=0 2>/dev/null || true
                 grub2-editenv "$envfile" set saved_entry=0 2>/dev/null || true
+                grub2-editenv "$envfile" set "kernelopts=${ROOT_PARAM} ro ${SILENT_CMDLINE}" 2>/dev/null || true
             done
         fi
 
@@ -783,10 +806,24 @@ PRIMARY_BLS_EOF
         echo "-> Génération du grub.cfg (/boot/grub2/grub.cfg) via $GRUB_MKCONFIG_BIN..."
         "$GRUB_MKCONFIG_BIN" -o /boot/grub2/grub.cfg 2>&1 || true
 
-        # Forcer timeout=0 et timeout_style=hidden dans grub.cfg généré pour un démarrage direct silencieux
+        # Nettoyage post-mkconfig de /etc/kernel/cmdline, /boot/loader/entries/*.conf et /boot/grub2/grub.cfg
+        # (Empêche grub2-mkconfig / 10_linux de réinjecter le LVM de la VM de build, ex: /dev/fedora_arrera-linux-compile/root)
+        echo "${ROOT_PARAM} ro ${SILENT_CMDLINE}" > /etc/kernel/cmdline
+        if [ -d /boot/loader/entries ]; then
+            for entry in /boot/loader/entries/*.conf; do
+                [ -f "$entry" ] || continue
+                sed -i -E 's/\s+(rd\.live\.image|rd\.lvm\.lv=[^ ]+|rd\.luks\.uuid=[^ ]+)//g' "$entry" 2>/dev/null || true
+                sed -i -E "s|^options .*|options ${ROOT_PARAM} ro ${SILENT_CMDLINE}|g" "$entry" 2>/dev/null || true
+            done
+        fi
+
+        # Forcer timeout=0, timeout_style=hidden, gfxpayload=keep et l'UUID racine cible dans grub.cfg généré
         if [ -s /boot/grub2/grub.cfg ]; then
             sed -i -E 's/^[[:space:]]*set timeout=[0-9]+/set timeout=0/g' /boot/grub2/grub.cfg 2>/dev/null || true
             sed -i -E 's/^[[:space:]]*set timeout_style=.*/set timeout_style=hidden/g' /boot/grub2/grub.cfg 2>/dev/null || true
+            sed -i -E 's/^[[:space:]]*set gfxpayload=text/load_video\n  set gfxpayload=keep/g' /boot/grub2/grub.cfg 2>/dev/null || true
+            sed -i -E 's/\s+(rd\.live\.image|rd\.lvm\.lv=[^ ]+)//g' /boot/grub2/grub.cfg 2>/dev/null || true
+            sed -i -E "s|root=/dev/[^ ]+|${ROOT_PARAM}|g" /boot/grub2/grub.cfg 2>/dev/null || true
         fi
 
         # Vérifier que grub.cfg est valide (non vide, contient l'UUID cible et menuentry en BIOS ou blscfg/menuentry en UEFI)
