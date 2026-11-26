@@ -1,107 +1,69 @@
-# 📋 Feuille de route (`todo.md`) — `arrera-release`
+# TODO — `arrera-release` : Intégration de l'OOBE `arrera-blue-lynx` sur les 4 Saveurs & Simplification Post-Installation Calamares
 
-Ce document détaille toutes les modifications à apporter dans le dépôt **`arrera-release`** (fichiers Kickstart `.ks`) pour :
-1. **Résoudre la lenteur à 91 %** lors de l'installation Calamares (`arrera-postinstall.sh`).
-2. **Corriger le démarrage sur les systèmes BIOS Legacy (`x86_64`)** après l'installation, sans impacter l'installation UEFI (`x86_64` GRUB2 + Shim Secure Boot et `aarch64` `systemd-boot`).
-3. **Éliminer la duplication et les conflits entre `arrera-release` et le paquet RPM `arrera-installer`**.
+Ce document détaille les modifications et suppressions à effectuer dans le dépôt `arrera-release` pour unifier le premier démarrage (**`arrera-blue-lynx`**) sur toutes les saveurs (`home`, `school`, `enterprise`, `server`) et synchroniser la post-installation Calamares avec **`arrera-installer`**.
 
 ---
 
-## 🔍 1. Diagnostic côté Kickstarts (`arrera-release`)
+## 1. Intégration de `arrera-blue-lynx` dans le Socle Commun (`kickstarts/base/common.ks` & `kickstarts/flavors/*.ks`)
 
-### A. Pourquoi `arrera-release` et `arrera-installer` entraient en conflit
-Pendant la compilation de l'ISO (`livemedia-creator`) :
-1. DNF installe le paquet RPM `arrera-installer` (et le sous-paquet `arrera-installer-<saveur>`), qui déploie `/usr/bin/arrera-postinstall.sh`, `/usr/bin/arrera-installer-kiosk.sh` et `/etc/calamares/modules/partition.conf`.
-2. Ensuite, les sections `%post` de `kickstarts/base/installer.ks` et `kickstarts/arch/x86_64.ks` **écrasaient** `/usr/bin/arrera-postinstall.sh` et `/etc/calamares/modules/partition.conf` avec leur propre version codée en dur dans les `.ks`.
-3. Conséquence : toute modification faite uniquement dans le dépôt `arrera-installer` était écrasée par `installer.ks` et `x86_64.ks` lors de la génération de l'ISO.
+### [ ] A. Ajout de `arrera-blue-lynx` dans `kickstarts/base/common.ks`
+- **Fichier** : [kickstarts/base/common.ks](file:///Users/baptistep/Documents/arrera-blue/arrera-release/kickstarts/base/common.ks)
+- **Actions** :
+  1. Ajouter `arrera-blue-lynx` dans la section `%packages` aux côtés de `abpm`, `grubby` et `dbus-daemon`, afin que l'assistant OOBE soit installé par défaut sur les 4 saveurs (`Home`, `School/Education`, `Enterprise`, `Server`).
 
----
-
-### B. Pourquoi l'étape 91 % dans `kickstarts/base/installer.ks` restait très longue
-Même après suppression du `dnf makecache` et de `dracut --regenerate-all`, deux opérations lourdes restaient dans le `arrera-postinstall.sh` embarqué dans `kickstarts/base/installer.ks` :
-1. **`dnf upgrade -y --refresh` complet (ligne 134)** :
-   - En mode `online`, DNF synchronise les **8 dépôts** (y compris `rpmsphere` sur GitHub qui est très lent) et met à jour l'intégralité des paquets Fedora 44 (noyau, `linux-firmware`, Mesa, Firefox, GNOME...) à l'intérieur du chroot Calamares figé à 91 %.
-2. **`dracut -f --no-hostonly -a "rescue"` sur `x86_64` (ligne 561)** :
-   - Génère une archive `initramfs` générique de ~200 Mo contenant tous les pilotes et firmwares du noyau, ce qui bloque le CPU pendant 2 à 4 minutes (alors que cette étape n'existe pas sur `aarch64`).
-
----
-
-### C. Pourquoi le boot BIOS Legacy (`x86_64`) échouait après l'installation
-1. **`GRUB_ENABLE_BLSCFG=true` en mode BIOS Legacy (`kickstarts/base/installer.ks` ligne 512)** :
-   - En UEFI, `/boot/efi/EFI/fedora/grub.cfg` contient un stub complet avec fallback `menuentry`.
-   - En **BIOS Legacy (`i386-pc`)**, GRUB lit directement `/boot/grub2/grub.cfg`. Lorsque `GRUB_ENABLE_BLSCFG=true` est activé dans `/etc/default/grub`, `grub2-mkconfig` n'écrit **aucun bloc `menuentry`** dans `/boot/grub2/grub.cfg` : il utilise `insmod blscfg` + `blscfg`.
-   - Or, juste avant `grub2-mkconfig`, `arrera-postinstall.sh` exécute `grub2-editenv /boot/grub2/grubenv create`, ce qui efface la variable `kernelopts` de `grubenv` attendue par les entrées BLS de Fedora, ou empêche `blscfg` de localiser `/boot/loader/entries` sur une partition MBR unique. Avec `GRUB_TIMEOUT=0`, GRUB BIOS reste bloqué sur un écran noir ou `grub>`.
-2. **Validation de `/boot/grub2/grub.cfg` en mode BIOS** :
-   - En mode BIOS Legacy, `/boot/grub2/grub.cfg` doit contenir directement des blocs `menuentry 'Arrera Blue 2026'` explicites (`GRUB_ENABLE_BLSCFG=false`), zodat `core.img` (`i386-pc`) charge directement `/boot/vmlinuz-<kver>` et `/boot/initramfs-<kver>.img` sans dépendre de `blscfg.mod`.
+### [ ] B. Nettoyage des doublons dans `kickstarts/flavors/*.ks`
+- **Fichiers** :
+  - [kickstarts/flavors/home.ks](file:///Users/baptistep/Documents/arrera-blue/arrera-release/kickstarts/flavors/home.ks)
+  - [kickstarts/flavors/school.ks](file:///Users/baptistep/Documents/arrera-blue/arrera-release/kickstarts/flavors/school.ks)
+  - [kickstarts/flavors/enterprise.ks](file:///Users/baptistep/Documents/arrera-blue/arrera-release/kickstarts/flavors/enterprise.ks)
+  - [kickstarts/flavors/server.ks](file:///Users/baptistep/Documents/arrera-blue/arrera-release/kickstarts/flavors/server.ks)
+- **Actions** :
+  1. Retirer l'entrée `arrera-blue-lynx` de `home.ks` et `school.ks` (puisqu'elle est désormais centralisée dans `common.ks`).
+  2. Vérifier que `enterprise.ks` et `server.ks` copient bien leur fichier `settings-enterprise.conf` / `settings-server.conf` vers `/etc/calamares/settings.conf` et appellent `/usr/bin/arrera-calamares-sanitize.sh`.
 
 ---
 
-## 🛠️ 2. Checklist détaillée des modifications à effectuer dans `arrera-release`
+## 2. Synchronisation de `kickstarts/base/installer.ks` avec le nouveau pipeline Calamares / OOBE
 
-### Tâche 1 : Optimiser l'étape 91 % (~20-30 secondes) dans `kickstarts/base/installer.ks`
-- [x] **1.1. Remplacer la mise à jour DNF globale par une mise à jour ciblée sur le Copr Arrera (lignes 131-137)** :
-  - Ne rafraîchir et ne mettre à jour en mode `online` **que** les paquets Arrera depuis le dépôt Copr (`--disablerepo="*" --enablerepo="*arrera*"`), ce qui évite d'interroger `rpmsphere` (GitHub) et les dépôts Fedora/RPM Fusion pendant Calamares :
-  ```bash
-  if [ "$IS_ONLINE" -eq 1 ]; then
-      echo "-> Connexion Internet confirmée !"
-      echo "-> Mise à jour rapide des composants Arrera..."
-      dnf upgrade -y --disablerepo="*" --enablerepo="*arrera*" \
-          --setopt=timeout=10 --setopt=retries=2 \
-          "arrera-*" "blue-*" "abpm" "gnome-shell-extension-arrera-*" || true
-      gpgconf --kill all 2>/dev/null || true
-      echo "-> Composants Arrera mis à jour avec succès."
-  fi
-  ```
-- [x] **1.2. Générer l'initramfs principal en mode `--hostonly` rapide (ligne 211)** :
-  ```bash
-  if command -v dracut >/dev/null 2>&1 && [ -n "$KVER" ]; then
-      echo "-> Génération rapide de l'initramfs (--hostonly) pour le noyau $KVER..."
-      dracut -f --hostonly --add plymouth --kver "$KVER" "/boot/initramfs-${KVER}.img" 2>&1 || \
-          dracut -f --add plymouth --kver "$KVER" "/boot/initramfs-${KVER}.img" 2>&1 || true
-  fi
-  ```
-- [x] **1.3. Remplacer le lent `dracut -f --no-hostonly -a "rescue"` par une copie directe de l'initramfs principal sur `x86_64` (lignes 555-563)** :
-  - Au lieu de passer 3 minutes à recompiler une image `--no-hostonly` de 200 Mo à 91 %, copier directement `/boot/initramfs-${KVER}.img` vers `/boot/initramfs-0-rescue-${CURRENT_MACHINE_ID}.img` :
-  ```bash
-  if [ ! -f "$RESCUE_VMLINUZ" ]; then
-      cp -f "/boot/vmlinuz-${KVER}" "$RESCUE_VMLINUZ" 2>/dev/null || cp -f "$LATEST_KERNEL" "$RESCUE_VMLINUZ" 2>/dev/null || true
-  fi
-  if [ ! -f "$RESCUE_INITRD" ] && [ -s "/boot/initramfs-${KVER}.img" ]; then
-      echo "-> Création rapide de l'initramfs rescue pour la machine $CURRENT_MACHINE_ID..."
-      cp -f "/boot/initramfs-${KVER}.img" "$RESCUE_INITRD" 2>/dev/null || true
-  fi
-  ```
+### [ ] A. Mise à jour exclusive de `arrera-blue-lynx` et `abpm` à l'étape 1 de `arrera-postinstall.sh`
+- **Fichier** : [kickstarts/base/installer.ks](file:///Users/baptistep/Documents/arrera-blue/arrera-release/kickstarts/base/installer.ks)
+- **Actions** :
+  1. Supprimer la lecture de l'argument `$1` (`online` / `offline`).
+  2. Tester automatiquement la connectivité Internet (timeout 3-4s) et mettre à jour uniquement **`arrera-blue-lynx`** et **`abpm`** :
+     ```bash
+     abpm clean expire-cache 2>/dev/null || true
+     abpm update -y --dnf arrera-blue-lynx abpm || \
+         dnf upgrade -y --disablerepo="*" --enablerepo="*arrera*" \
+             --setopt=timeout=10 --setopt=retries=2 \
+             arrera-blue-lynx abpm || true
+     ```
 
----
+### [ ] B. Activation de `arrera-oobe.service` sur les 4 saveurs (`home`, `education`, `enterprise`, `server`)
+- **Fichier** : [kickstarts/base/installer.ks](file:///Users/baptistep/Documents/arrera-blue/arrera-release/kickstarts/base/installer.ks)
+- **Actions** :
+  1. Dans `arrera-postinstall.sh`, associer chaque `ED_BRANDING` à son édition OOBE et son hostname :
+     - `arrera-education` -> `OOBE_EDITION="education"`, `IS_GRAPHICAL_OOBE=1`, `TARGET_HOSTNAME="arrera-school"`
+     - `arrera-enterprise` -> `OOBE_EDITION="enterprise"`, `IS_GRAPHICAL_OOBE=1`, `TARGET_HOSTNAME="arrera-enterprise"`
+     - `arrera-server` -> `OOBE_EDITION="server"`, `IS_GRAPHICAL_OOBE=0`, `TARGET_HOSTNAME="arrera-server"`
+     - `arrera-home` | `arrera` | `*` -> `OOBE_EDITION="home"`, `IS_GRAPHICAL_OOBE=1`, `TARGET_HOSTNAME="arrera"`
+  2. À l'étape `[4/8]` :
+     - Déployer `/usr/local/bin/arrera-oobe.sh`, `/etc/systemd/system/arrera-oobe.service` et `/etc/arrera-oobe-edition` sur **toutes les saveurs** (y compris `enterprise` et `server`).
+     - Désactiver `gdm` pour le premier démarrage, activer `multi-user.target` et `arrera-oobe.service`.
+  3. À l'étape `[7/8]` :
+     - Supprimer systématiquement le compte temporaire Live `arrera` sur les 4 saveurs.
+  4. À l'étape `[8/8]` :
+     - Désinstaller `calamares`, `arrera-installer` et ses sous-paquets sur les 4 saveurs.
+     - Conserver `cage` sur `home`, `education`, `enterprise` (`IS_GRAPHICAL_OOBE=1`), et désinstaller `cage` sur `server` (`IS_GRAPHICAL_OOBE=0`).
 
-### Tâche 2 : Garantir le démarrage BIOS Legacy (`x86_64`) dans `kickstarts/base/installer.ks`
-- [x] **2.1. Désactiver `GRUB_ENABLE_BLSCFG` uniquement en mode BIOS Legacy (lignes 498-518)** :
-  - Détecter si le système cible est UEFI ou BIOS Legacy :
-  ```bash
-  IS_UEFI_SYSTEM=0
-  if [ -d /sys/firmware/efi ] || grep -q '/boot/efi' /etc/fstab 2>/dev/null; then
-      IS_UEFI_SYSTEM=1
-  fi
-  if [ "$IS_UEFI_SYSTEM" -eq 1 ]; then
-      GRUB_BLSCFG_VAL="true"
-  else
-      GRUB_BLSCFG_VAL="false"
-  fi
-  ```
-  - Injecter `GRUB_ENABLE_BLSCFG=${GRUB_BLSCFG_VAL}` dans `/etc/default/grub`.
-  - Ainsi :
-    - En **UEFI** (`IS_UEFI_SYSTEM=1`) : conserve `GRUB_ENABLE_BLSCFG=true` (comportement actuel Fedora UEFI inchangé).
-    - En **BIOS Legacy** (`IS_UEFI_SYSTEM=0`) : passe à `GRUB_ENABLE_BLSCFG=false` pour que `grub2-mkconfig.orig` écrive directement les blocs `menuentry` classiques dans `/boot/grub2/grub.cfg`.
-- [x] **2.2. En mode BIOS Legacy, forcer l'écriture des `menuentry` statiques si `grub2-mkconfig` n'en a pas généré (lignes 775-862)** :
-  - Lors de la vérification de `/boot/grub2/grub.cfg` :
-    - En BIOS (`IS_UEFI_SYSTEM=0`), exiger la présence d'un vrai `menuentry` (`grep -q 'menuentry ' /boot/grub2/grub.cfg`) et de `$BOOT_UUID`.
-    - Dans le fallback `/boot/grub2/grub.cfg`, si `IS_UEFI_SYSTEM=0`, écrire systématiquement les blocs `menuentry 'Arrera Blue 2026'` et `menuentry 'Arrera Blue 2026 (Rescue)'` directs (sans passer par `blscfg`).
-- [x] **2.3. Conserver l'activation du drapeau bootable MBR (`0x80`) et `grub2-install --target=i386-pc --boot-directory=/boot` (lignes 695-740)** :
-  - Déjà en place dans `kickstarts/base/installer.ks` et `kickstarts/arch/x86_64.ks` (`defaultPartitionTableType: "msdos"` en BIOS).
-
----
-
-### Tâche 3 : Synchronisation long terme avec `arrera-installer`
-- [ ] Une fois que le RPM `arrera-installer` (version `2026.beta.1-20`) aura intégré ces mêmes modifications dans `kiosk/arrera-postinstall.sh`, `kiosk/arrera-installer-kiosk.sh` et `config/modules/partition.conf` sur Copr :
-  - Soit conserver la copie synchronisée dans `kickstarts/base/installer.ks`,
-  - Soit supprimer la réécriture `cat > /usr/bin/arrera-postinstall.sh` de `kickstarts/base/installer.ks` pour laisser le paquet RPM `arrera-installer` être l'unique source de vérité.
+### [ ] C. Suppression de `packagechooser@installmode` et de `shellprocess-postinstall-education.conf`
+- **Fichier** : [kickstarts/base/installer.ks](file:///Users/baptistep/Documents/arrera-blue/arrera-release/kickstarts/base/installer.ks)
+- **Actions** :
+  1. Dans `/etc/calamares/modules/shellprocess-postinstall.conf`, retirer l'argument `"${gs[packagechooser_installmode]}"` :
+     ```yaml
+     script:
+         - command: "/usr/bin/arrera-postinstall.sh"
+           timeout: 1200
+     ```
+  2. Supprimer la génération de `/etc/calamares/modules/shellprocess-postinstall-education.conf`.
+  3. Dans le bloc `if [ ! -f /etc/calamares/settings.conf ]`, supprimer l'instance `installmode` et l'étape `- packagechooser@installmode`.
+  4. Dans `/usr/bin/arrera-calamares-sanitize.sh` ([kickstarts/arch/x86_64.ks](file:///Users/baptistep/Documents/arrera-blue/arrera-release/kickstarts/arch/x86_64.ks) et [kickstarts/arch/aarch64.ks](file:///Users/baptistep/Documents/arrera-blue/arrera-release/kickstarts/arch/aarch64.ks)), ajouter la suppression préventive de toute ligne `- users` ou `- packagechooser@installmode` dans `/etc/calamares/settings*.conf`.
