@@ -19,7 +19,6 @@ repo --name="copr-arrera-education-suite" --baseurl="https://download.copr.fedor
 
 # Configuration, installateur Calamares et OOBE Arrera Blue Lynx dédiés Éducation
 arrera-installer-education
-arrera-blue-lynx
 arrera-branding-education
 arrera-gnome-config-education
 

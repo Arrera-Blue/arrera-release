@@ -75,6 +75,7 @@ btop
 fastfetch
 bash-completion
 abpm
+arrera-blue-lynx
 grubby
 dbus-daemon
 

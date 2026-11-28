@@ -6,12 +6,12 @@ Ce document détaille les modifications et suppressions à effectuer dans le dé
 
 ## 1. Intégration de `arrera-blue-lynx` dans le Socle Commun (`kickstarts/base/common.ks` & `kickstarts/flavors/*.ks`)
 
-### [ ] A. Ajout de `arrera-blue-lynx` dans `kickstarts/base/common.ks`
+### [x] A. Ajout de `arrera-blue-lynx` dans `kickstarts/base/common.ks`
 - **Fichier** : [kickstarts/base/common.ks](file:///Users/baptistep/Documents/arrera-blue/arrera-release/kickstarts/base/common.ks)
 - **Actions** :
   1. Ajouter `arrera-blue-lynx` dans la section `%packages` aux côtés de `abpm`, `grubby` et `dbus-daemon`, afin que l'assistant OOBE soit installé par défaut sur les 4 saveurs (`Home`, `School/Education`, `Enterprise`, `Server`).
 
-### [ ] B. Nettoyage des doublons dans `kickstarts/flavors/*.ks`
+### [x] B. Nettoyage des doublons dans `kickstarts/flavors/*.ks`
 - **Fichiers** :
   - [kickstarts/flavors/home.ks](file:///Users/baptistep/Documents/arrera-blue/arrera-release/kickstarts/flavors/home.ks)
   - [kickstarts/flavors/school.ks](file:///Users/baptistep/Documents/arrera-blue/arrera-release/kickstarts/flavors/school.ks)
@@ -25,7 +25,7 @@ Ce document détaille les modifications et suppressions à effectuer dans le dé
 
 ## 2. Synchronisation de `kickstarts/base/installer.ks` avec le nouveau pipeline Calamares / OOBE
 
-### [ ] A. Mise à jour exclusive de `arrera-blue-lynx` et `abpm` à l'étape 1 de `arrera-postinstall.sh`
+### [x] A. Mise à jour exclusive de `arrera-blue-lynx` et `abpm` à l'étape 1 de `arrera-postinstall.sh`
 - **Fichier** : [kickstarts/base/installer.ks](file:///Users/baptistep/Documents/arrera-blue/arrera-release/kickstarts/base/installer.ks)
 - **Actions** :
   1. Supprimer la lecture de l'argument `$1` (`online` / `offline`).
@@ -38,7 +38,7 @@ Ce document détaille les modifications et suppressions à effectuer dans le dé
              arrera-blue-lynx abpm || true
      ```
 
-### [ ] B. Activation de `arrera-oobe.service` sur les 4 saveurs (`home`, `education`, `enterprise`, `server`)
+### [x] B. Activation de `arrera-oobe.service` sur les 4 saveurs (`home`, `education`, `enterprise`, `server`)
 - **Fichier** : [kickstarts/base/installer.ks](file:///Users/baptistep/Documents/arrera-blue/arrera-release/kickstarts/base/installer.ks)
 - **Actions** :
   1. Dans `arrera-postinstall.sh`, associer chaque `ED_BRANDING` à son édition OOBE et son hostname :
@@ -55,7 +55,7 @@ Ce document détaille les modifications et suppressions à effectuer dans le dé
      - Désinstaller `calamares`, `arrera-installer` et ses sous-paquets sur les 4 saveurs.
      - Conserver `cage` sur `home`, `education`, `enterprise` (`IS_GRAPHICAL_OOBE=1`), et désinstaller `cage` sur `server` (`IS_GRAPHICAL_OOBE=0`).
 
-### [ ] C. Suppression de `packagechooser@installmode` et de `shellprocess-postinstall-education.conf`
+### [x] C. Suppression de `packagechooser@installmode` et de `shellprocess-postinstall-education.conf`
 - **Fichier** : [kickstarts/base/installer.ks](file:///Users/baptistep/Documents/arrera-blue/arrera-release/kickstarts/base/installer.ks)
 - **Actions** :
   1. Dans `/etc/calamares/modules/shellprocess-postinstall.conf`, retirer l'argument `"${gs[packagechooser_installmode]}"` :

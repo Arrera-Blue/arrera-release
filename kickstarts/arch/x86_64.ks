@@ -61,8 +61,10 @@ cat > /usr/bin/arrera-calamares-sanitize.sh << 'SANITIZE_EOF'
 #!/bin/bash
 for f in /etc/calamares/settings.conf /etc/calamares/settings-*.conf /usr/share/calamares/settings.conf; do
     [ -f "$f" ] || continue
-    sed -i -E '/^[[:space:]]*-[[:space:]]*bootloader[[:space:]]*$/d' "$f" 2>/dev/null || true
+    sed -i -E '/^[[:space:]]*-[[:space:]]*(bootloader|users|packagechooser@installmode)[[:space:]]*$/d' "$f" 2>/dev/null || true
+    sed -i -E 's/shellprocess-postinstall-education\.conf/shellprocess-postinstall.conf/g' "$f" 2>/dev/null || true
 done
+rm -f /etc/calamares/modules/packagechooser-installmode.conf /etc/calamares/modules/shellprocess-postinstall-education.conf /etc/calamares/modules/users.conf 2>/dev/null || true
 
 # Configuration dynamique de la table de partition selon le mode de démarrage du Live :
 # UEFI -> gpt | BIOS Legacy -> msdos (MBR standard avec MBR-gap pour GRUB i386-pc)

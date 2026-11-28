@@ -121,51 +121,51 @@ if [ -d /sys/firmware/efi ] && ! mountpoint -q /sys/firmware/efi/efivars 2>/dev/
     mount -t efivarfs efivarfs /sys/firmware/efi/efivars 2>/dev/null && MOUNTED_EFIVARS=1 || true
 fi
 
-# 1. Vérification réseau et mise à jour DNF selon le mode choisi (online ou offline)
+# 1. Vérification réseau et mise à jour exclusive de l'OOBE (arrera-blue-lynx) et d'abpm
 echo "[1/8] Test de la connectivité Internet..."
 
-# Paramètre transmis par Calamares (depuis l'écran Mode d'installation : online ou offline)
-INSTALL_CHOICE="${1:-}"
-
 IS_ONLINE=0
-if [ "$INSTALL_CHOICE" = "offline" ]; then
-    echo "-> Choix utilisateur : Mode hors-ligne demandé."
-    echo "-> Étape réseau ignorée : installation locale directe."
-else
-    # Sauvegarder la cible du lien symbolique resolv.conf (souvent systemd-resolved)
-    RESOLV_IS_LINK=0
-    RESOLV_TARGET=""
-    if [ -L /etc/resolv.conf ]; then
-        RESOLV_IS_LINK=1
-        RESOLV_TARGET=$(readlink /etc/resolv.conf 2>/dev/null || true)
-    fi
+# Sauvegarder la cible du lien symbolique resolv.conf (souvent systemd-resolved)
+RESOLV_IS_LINK=0
+RESOLV_TARGET=""
+if [ -L /etc/resolv.conf ]; then
+    RESOLV_IS_LINK=1
+    RESOLV_TARGET=$(readlink /etc/resolv.conf 2>/dev/null || true)
+fi
 
-    # Supprimer le lien symbolique (souvent brisé dans le chroot) avant d'écrire un fichier régulier
-    rm -f /etc/resolv.conf 2>/dev/null || true
-    cat > /etc/resolv.conf << 'DNS_EOF'
+# Supprimer le lien symbolique (souvent brisé dans le chroot) avant d'écrire un fichier régulier
+rm -f /etc/resolv.conf 2>/dev/null || true
+cat > /etc/resolv.conf << 'DNS_EOF'
 nameserver 1.1.1.1
 nameserver 8.8.8.8
 DNS_EOF
 
-    if curl -s --connect-timeout 4 -m 6 https://fedoraproject.org >/dev/null 2>&1 || \
-       curl -s --connect-timeout 4 -m 6 https://google.com >/dev/null 2>&1 || \
-       curl -s --connect-timeout 3 -m 5 http://1.1.1.1 >/dev/null 2>&1 || \
-       ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then
-        IS_ONLINE=1
-    fi
+if curl -s --connect-timeout 4 -m 6 https://fedoraproject.org >/dev/null 2>&1 || \
+   curl -s --connect-timeout 4 -m 6 https://google.com >/dev/null 2>&1 || \
+   curl -s --connect-timeout 3 -m 5 http://1.1.1.1 >/dev/null 2>&1 || \
+   ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then
+    IS_ONLINE=1
+fi
 
-    if [ "$IS_ONLINE" -eq 1 ]; then
-        echo "-> Connexion Internet confirmée !"
-        echo "-> Mise à jour rapide des composants Arrera..."
+if [ "$IS_ONLINE" -eq 1 ]; then
+    echo "-> Connexion Internet confirmée !"
+    echo "-> Mise à jour exclusive d'arrera-blue-lynx et d'abpm..."
+    if command -v abpm >/dev/null 2>&1; then
+        abpm clean expire-cache 2>/dev/null || true
+        abpm update -y --dnf arrera-blue-lynx abpm || \
+            dnf upgrade -y --disablerepo="*" --enablerepo="*arrera*" \
+                --setopt=timeout=10 --setopt=retries=2 \
+                arrera-blue-lynx abpm || true
+    else
         dnf upgrade -y --disablerepo="*" --enablerepo="*arrera*" \
             --setopt=timeout=10 --setopt=retries=2 \
-            "arrera-*" "blue-*" "abpm" "gnome-shell-extension-arrera-*" || true
-        gpgconf --kill all 2>/dev/null || true
-        echo "-> Composants Arrera mis à jour avec succès."
-    else
-        echo "-> Aucune connexion Internet détectée."
-        echo "-> Étape réseau ignorée : installation locale directe."
+            arrera-blue-lynx abpm || true
     fi
+    gpgconf --kill all 2>/dev/null || true
+    echo "-> arrera-blue-lynx et abpm mis à jour avec succès."
+else
+    echo "-> Aucune connexion Internet détectée."
+    echo "-> Étape réseau ignorée : utilisation des versions locales de l'ISO."
 fi
 
 # Restauration propre du lien symbolique resolv.conf pour systemd-resolved
@@ -1138,50 +1138,51 @@ if [ -f /etc/calamares/settings.conf ]; then
     ED_BRANDING=$(grep '^branding:' /etc/calamares/settings.conf 2>/dev/null | awk '{print $2}')
 fi
 
-IS_OOBE_EDITION=0
-OOBE_EDITION=""
+OOBE_EDITION="home"
+IS_GRAPHICAL_OOBE=1
+TARGET_HOSTNAME="arrera"
 case "$ED_BRANDING" in
     arrera-education)
-        IS_OOBE_EDITION=1
         OOBE_EDITION="education"
+        IS_GRAPHICAL_OOBE=1
+        TARGET_HOSTNAME="arrera-school"
         ;;
-    arrera-home|arrera)
-        IS_OOBE_EDITION=1
+    arrera-enterprise)
+        OOBE_EDITION="enterprise"
+        IS_GRAPHICAL_OOBE=1
+        TARGET_HOSTNAME="arrera-enterprise"
+        ;;
+    arrera-server)
+        OOBE_EDITION="server"
+        IS_GRAPHICAL_OOBE=0
+        TARGET_HOSTNAME="arrera-server"
+        ;;
+    arrera-home|arrera|*)
         OOBE_EDITION="home"
+        IS_GRAPHICAL_OOBE=1
+        TARGET_HOSTNAME="arrera"
         ;;
 esac
 
-# 4. Configuration du premier démarrage (OOBE Arrera Blue Lynx pour Home/Education, GDM/Headless sinon)
-if [ "$IS_OOBE_EDITION" -eq 1 ]; then
-    echo "[4/8] Configuration de la session OOBE de premier démarrage ($OOBE_EDITION)..."
-    mkdir -p /usr/local/bin /etc/systemd/system/multi-user.target.wants
-    if [ -f /usr/bin/arrera-oobe.sh ]; then
-        cp -f /usr/bin/arrera-oobe.sh /usr/local/bin/arrera-oobe.sh
-        # Passer --windowed sous Cage : Cage met déjà toute fenêtre en plein écran et évite le crash wlroots Assertion 'surface->initialized' failed
-        sed -i -E 's|cage -s -- "\$OOBE_BIN"([[:space:]]*)$|cage -s -- "$OOBE_BIN" --windowed\1|g' /usr/local/bin/arrera-oobe.sh 2>/dev/null || true
-        chmod 0755 /usr/local/bin/arrera-oobe.sh
-    fi
-    if [ -f /usr/lib/systemd/system/arrera-oobe.service ]; then
-        cp -f /usr/lib/systemd/system/arrera-oobe.service /etc/systemd/system/arrera-oobe.service
-        chmod 0644 /etc/systemd/system/arrera-oobe.service
-    fi
-    echo "$OOBE_EDITION" > /etc/arrera-oobe-edition
-
-    systemctl disable gdm 2>/dev/null || true
-    rm -f /etc/systemd/system/display-manager.service
-    systemctl set-default multi-user.target 2>/dev/null || ln -sf /usr/lib/systemd/system/multi-user.target /etc/systemd/system/default.target
-    systemctl enable arrera-oobe.service 2>/dev/null || ln -sf /etc/systemd/system/arrera-oobe.service /etc/systemd/system/multi-user.target.wants/arrera-oobe.service
-else
-    echo "[4/8] Configuration de la cible d'amorçage..."
-    if command -v gdm >/dev/null 2>&1 || [ -f /usr/lib/systemd/system/gdm.service ]; then
-        echo "-> Environnement de bureau détecté : activation de graphical.target et GDM"
-        systemctl set-default graphical.target 2>/dev/null || ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target
-        systemctl enable gdm 2>/dev/null || ln -sf /usr/lib/systemd/system/gdm.service /etc/systemd/system/display-manager.service
-    else
-        echo "-> Aucun environnement graphique détecté : activation de multi-user.target (Serveur)"
-        systemctl set-default multi-user.target 2>/dev/null || ln -sf /usr/lib/systemd/system/multi-user.target /etc/systemd/system/default.target
-    fi
+# 4. Configuration du premier démarrage (OOBE Arrera Blue Lynx sur les 4 éditions)
+echo "[4/8] Configuration de la session OOBE de premier démarrage ($OOBE_EDITION)..."
+mkdir -p /usr/local/bin /etc/systemd/system/multi-user.target.wants
+if [ -f /usr/bin/arrera-oobe.sh ]; then
+    cp -f /usr/bin/arrera-oobe.sh /usr/local/bin/arrera-oobe.sh
+    # Passer --windowed sous Cage : Cage met déjà toute fenêtre en plein écran et évite le crash wlroots Assertion 'surface->initialized' failed
+    sed -i -E 's|cage -s -- "\$OOBE_BIN"([[:space:]]*)$|cage -s -- "$OOBE_BIN" --windowed\1|g' /usr/local/bin/arrera-oobe.sh 2>/dev/null || true
+    chmod 0755 /usr/local/bin/arrera-oobe.sh
 fi
+if [ -f /usr/lib/systemd/system/arrera-oobe.service ]; then
+    cp -f /usr/lib/systemd/system/arrera-oobe.service /etc/systemd/system/arrera-oobe.service
+    chmod 0644 /etc/systemd/system/arrera-oobe.service
+fi
+echo "$OOBE_EDITION" > /etc/arrera-oobe-edition
+
+systemctl disable gdm 2>/dev/null || true
+rm -f /etc/systemd/system/display-manager.service
+systemctl set-default multi-user.target 2>/dev/null || ln -sf /usr/lib/systemd/system/multi-user.target /etc/systemd/system/default.target
+systemctl enable arrera-oobe.service 2>/dev/null || ln -sf /etc/systemd/system/arrera-oobe.service /etc/systemd/system/multi-user.target.wants/arrera-oobe.service
 
 # 5. Désactiver et supprimer définitivement le mode kiosque
 echo "[5/8] Nettoyage des composants Kiosque Live..."
@@ -1194,36 +1195,17 @@ rm -f /usr/bin/arrera-installer-kiosk.sh
 echo "[6/8] Réinitialisation de la configuration de connexion GDM..."
 rm -f /etc/gdm/custom.conf
 
-# 7. Nettoyer le compte Live temporaire 'arrera'
+# 7. Nettoyer le compte Live temporaire 'arrera' sur toutes les éditions
 echo "[7/8] Vérification des comptes utilisateurs..."
-if [ "$IS_OOBE_EDITION" -eq 1 ]; then
-    if id arrera >/dev/null 2>&1 || [ -d /home/arrera ] || [ -f /etc/sudoers.d/arrera ]; then
-        echo "-> Suppression du compte temporaire live 'arrera' (création différée vers Arrera Blue Lynx)..."
-        pkill -9 -u arrera 2>/dev/null || true
-        userdel -r -f arrera 2>/dev/null || true
-        rm -rf /home/arrera
-        rm -f /etc/sudoers.d/arrera
-    fi
-else
-    OTHER_USER=$(awk -F: '$3 >= 1000 && $1 != "arrera" && $1 != "nobody" {print $1}' /etc/passwd | head -n 1)
-    if [ -n "$OTHER_USER" ]; then
-        echo "-> Utilisateur principal installé détecté : $OTHER_USER"
-        echo "-> Suppression du compte temporaire live 'arrera'..."
-        pkill -9 -u arrera 2>/dev/null || true
-        userdel -r -f arrera 2>/dev/null || true
-        rm -rf /home/arrera
-        rm -f /etc/sudoers.d/arrera
-    fi
+if id arrera >/dev/null 2>&1 || [ -d /home/arrera ] || [ -f /etc/sudoers.d/arrera ]; then
+    echo "-> Suppression du compte temporaire live 'arrera' (création différée vers Arrera Blue Lynx)..."
+    pkill -9 -u arrera 2>/dev/null || true
+    userdel -r -f arrera 2>/dev/null || true
+    rm -rf /home/arrera
+    rm -f /etc/sudoers.d/arrera
 fi
 
 # 7b. Configuration garantie du nom d'hôte (hostname) selon l'édition
-TARGET_HOSTNAME=""
-if [ "$ED_BRANDING" = "arrera-education" ] || grep -q "^parents:" /etc/passwd 2>/dev/null; then
-    TARGET_HOSTNAME="arrera-school"
-elif [ "$ED_BRANDING" = "arrera-home" ] || [ "$ED_BRANDING" = "arrera" ]; then
-    TARGET_HOSTNAME="arrera"
-fi
-
 if [ -n "$TARGET_HOSTNAME" ]; then
     echo "-> Configuration officielle du nom d'hôte ($TARGET_HOSTNAME)..."
     echo "$TARGET_HOSTNAME" > /etc/hostname
@@ -1244,12 +1226,12 @@ rm -f /etc/xdg/autostart/install-*.desktop 2>/dev/null || true
 rm -f /usr/share/applications/calamares*.desktop 2>/dev/null || true
 
 # Désinstaller proprement les paquets de l'installateur du système cible
-if [ "$IS_OOBE_EDITION" -eq 1 ]; then
-    echo "-> Désinstallation de calamares et arrera-installer (conservation de cage pour OOBE)..."
-    REMOVE_PKGS=(calamares arrera-installer-home arrera-installer-education arrera-installer gnome-extensions-app)
+if [ "$IS_GRAPHICAL_OOBE" -eq 1 ]; then
+    echo "-> Désinstallation de calamares et arrera-installer (conservation de cage pour OOBE graphique)..."
+    REMOVE_PKGS=(calamares arrera-installer-home arrera-installer-education arrera-installer-enterprise arrera-installer-server arrera-installer gnome-extensions-app)
 else
-    echo "-> Désinstallation des paquets calamares, arrera-installer et cage..."
-    REMOVE_PKGS=(calamares arrera-installer-enterprise arrera-installer-server arrera-installer cage gnome-extensions-app)
+    echo "-> Désinstallation des paquets calamares, arrera-installer et cage (OOBE Serveur en console)..."
+    REMOVE_PKGS=(calamares arrera-installer-home arrera-installer-education arrera-installer-enterprise arrera-installer-server arrera-installer cage gnome-extensions-app)
 fi
 for pkg in "${REMOVE_PKGS[@]}"; do
     if rpm -q "$pkg" >/dev/null 2>&1; then
@@ -1267,7 +1249,7 @@ fi
 # Suppression des résidus et caches Calamares
 rm -rf /etc/calamares /usr/share/calamares /usr/lib64/calamares /usr/lib/calamares 2>/dev/null || true
 rm -f /usr/bin/calamares /usr/bin/arrera-installer-kiosk.sh /etc/systemd/system/arrera-kiosk.service 2>/dev/null || true
-if [ "$IS_OOBE_EDITION" -eq 0 ]; then
+if [ "$IS_GRAPHICAL_OOBE" -eq 0 ]; then
     rm -f /usr/bin/cage 2>/dev/null || true
 fi
 rm -f /usr/bin/arrera-calamares-sanitize.sh 2>/dev/null || true
@@ -1309,6 +1291,7 @@ chmod +x /usr/bin/arrera-postinstall.sh
 
 # 2. Configuration du module shellprocess Calamares
 mkdir -p /etc/calamares/modules
+rm -f /etc/calamares/modules/packagechooser-installmode.conf /etc/calamares/modules/shellprocess-postinstall-education.conf /etc/calamares/modules/users.conf 2>/dev/null || true
 cat > /etc/calamares/modules/shellprocess-postinstall.conf << 'CALAMARES_POSTINSTALL_CONF'
 # Configuration du module shellprocess-postinstall pour Arrera Linux
 ---
@@ -1316,20 +1299,9 @@ dontChroot: false
 timeout: 1200
 
 script:
-    - command: "/usr/bin/arrera-postinstall.sh \"${gs[packagechooser_installmode]}\""
+    - command: "/usr/bin/arrera-postinstall.sh"
       timeout: 1200
 CALAMARES_POSTINSTALL_CONF
-
-cat > /etc/calamares/modules/shellprocess-postinstall-education.conf << 'CALAMARES_POSTINSTALL_ED_CONF'
-# Configuration du module shellprocess-postinstall pour Arrera Linux Éducation
----
-dontChroot: false
-timeout: 1200
-
-script:
-    - command: "/usr/bin/arrera-postinstall.sh \"online\""
-      timeout: 1200
-CALAMARES_POSTINSTALL_ED_CONF
 
 # 3. Configuration principale de Calamares (settings.conf par défaut si non fourni par la saveur)
 if [ ! -f /etc/calamares/settings.conf ]; then
@@ -1343,9 +1315,6 @@ modules-search:
   - /usr/share/calamares/modules
 
 instances:
-  - id:       installmode
-    module:   packagechooser
-    config:   packagechooser-installmode.conf
   - id:       postinstall
     module:   shellprocess
     config:   shellprocess-postinstall.conf
@@ -1356,7 +1325,6 @@ sequence:
       - locale
       - keyboard
       - partition
-      - packagechooser@installmode
       - summary
   - exec:
       - partition
